@@ -1,0 +1,19 @@
+{
+  "name": "roblox-asset-uploader",
+  "version": "1.0.0",
+  "description": "Upload asset (Model/FBX/RBXM) ke Roblox lewat Open Cloud API, dari HP tanpa Studio",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "multer": "^1.4.5-lts.1",
+    "form-data": "^4.0.0",
+    "axios": "^1.7.2",
+    "dotenv": "^16.4.5"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

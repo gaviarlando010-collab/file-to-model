@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Upload Asset Roblox</title>
+<style>
+  :root {
+    --bg: #0f1115;
+    --card: #171a21;
+    --accent: #00a2ff;
+    --accent-hover: #0086d1;
+    --text: #f0f2f5;
+    --muted: #8a90a2;
+    --danger: #ff5c5c;
+    --success: #34c759;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+  }
+  .card {
+    background: var(--card);
+    border-radius: 16px;
+    padding: 28px 22px;
+    width: 100%;
+    max-width: 420px;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.4);
+  }
+  h1 {
+    font-size: 20px;
+    margin: 0 0 4px;
+  }
+  p.subtitle {
+    color: var(--muted);
+    font-size: 13px;
+    margin: 0 0 24px;
+  }
+  label {
+    display: block;
+    font-size: 13px;
+    color: var(--muted);
+    margin: 16px 0 6px;
+  }
+  input[type="text"], input[type="password"] {
+    width: 100%;
+    padding: 12px 14px;
+    border-radius: 10px;
+    border: 1px solid #2a2f3a;
+    background: #10131a;
+    color: var(--text);
+    font-size: 15px;
+  }
+  input[type="file"] {
+    width: 100%;
+    padding: 12px 0;
+    color: var(--muted);
+    font-size: 14px;
+  }
+  .dropzone {
+    border: 2px dashed #2a2f3a;
+    border-radius: 12px;
+    padding: 20px;
+    text-align: center;
+    margin-top: 6px;
+    transition: border-color 0.2s;
+  }
+  .dropzone.filled {
+    border-color: var(--accent);
+  }
+  .filename {
+    font-size: 13px;
+    color: var(--accent);
+    margin-top: 8px;
+    word-break: break-all;
+  }
+  button {
+    width: 100%;
+    margin-top: 24px;
+    padding: 14px;
+    border: none;
+    border-radius: 10px;
+    background: var(--accent);
+    color: white;
+    font-size: 16px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  button:disabled {
+    background: #2a2f3a;
+    color: var(--muted);
+  }
+  button:not(:disabled):active {
+    background: var(--accent-hover);
+  }
+  .status {
+    margin-top: 18px;
+    padding: 12px 14px;
+    border-radius: 10px;
+    font-size: 13px;
+    display: none;
+  }
+  .status.show { display: block; }
+  .status.error { background: rgba(255,92,92,0.12); color: var(--danger); }
+  .status.success { background: rgba(52,199,89,0.12); color: var(--success); }
+  .status.loading { background: rgba(0,162,255,0.12); color: var(--accent); }
+  .hint {
+    font-size: 12px;
+    color: var(--muted);
+    margin-top: 6px;
+  }
+  .tabs {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 20px;
+  }
+  .tab-btn {
+    flex: 1;
+    padding: 10px;
+    border-radius: 10px;
+    border: 1px solid #2a2f3a;
+    background: transparent;
+    color: var(--muted);
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    margin: 0;
+  }
+  .tab-btn.active {
+    background: var(--accent);
+    color: white;
+    border-color: var(--accent);
+  }
+  .panel { display: none; }
+  .panel.active { display: block; }
+  .settings-info {
+    font-size: 12px;
+    color: var(--muted);
+    background: #10131a;
+    border-radius: 10px;
+    padding: 10px 12px;
+    margin-top: 16px;
+  }
+</style>
+</head>
+<body>
+  <div class="card">
+    <h1>📦 Roblox Asset Uploader</h1>
+    <p class="subtitle">Upload sebagai <b>Model</b> (bukan Package) — langsung nongol di tab Model Toolbox.</p>
+
+    <div class="tabs">
+      <button type="button" class="tab-btn active" data-tab="upload">Upload</button>
+      <button type="button" class="tab-btn" data-tab="settings">⚙️ Settings</button>
+    </div>
+
+    <form id="uploadForm" class="panel active" data-panel="upload">
+      <label>Password</label>
+      <input type="password" id="password" placeholder="Password upload" required />
+
+      <label>Nama Asset</label>
+      <input type="text" id="displayName" placeholder="cth: Rumah Kayu 01" required />
+
+      <label>Deskripsi (opsional)</label>
+      <input type="text" id="description" placeholder="Deskripsi singkat" />
+
+      <label>File Asset</label>
+      <div class="dropzone" id="dropzone">
+        <input type="file" id="fileInput" accept=".fbx,.rbxm,.rbxmx" required />
+        <div class="filename" id="filename"></div>
+      </div>
+      <div class="hint">Format didukung: .fbx, .rbxm, .rbxmx — maks 20MB</div>
+
+      <button type="submit" id="submitBtn">Upload ke Roblox</button>
+    </form>
+
+    <div class="panel" data-panel="settings">
+      <label>Password</label>
+      <input type="password" id="settingsPassword" placeholder="Password upload" required />
+
+      <label>Roblox Open Cloud API Key</label>
+      <input type="text" id="apiKey" placeholder="Kosongkan kalau gak mau diubah" autocomplete="off" />
+
+      <label>Roblox User ID</label>
+      <input type="text" id="userId" placeholder="cth: 1234567" />
+
+      <label>Group ID (opsional)</label>
+      <input type="text" id="groupId" placeholder="Kosongkan kalau upload sebagai akun pribadi" />
+
+      <button type="button" id="saveSettingsBtn">Simpan Settings</button>
+      <button type="button" id="loadSettingsBtn" style="background:#2a2f3a;margin-top:10px;">
+        Cek Settings Tersimpan
+      </button>
+
+      <div class="settings-info" id="settingsInfo">
+        Isi password lalu klik "Cek Settings Tersimpan" buat lihat konfigurasi yang aktif saat ini.
+      </div>
+    </div>
+
+    <div class="status" id="status"></div>
+  </div>
+
+<script>
+  // === Tab switching ===
+  const tabBtns = document.querySelectorAll(".tab-btn");
+  const panels = document.querySelectorAll(".panel");
+  tabBtns.forEach((btn) => {
+    btn.addEventListener("click", () => {
+      tabBtns.forEach((b) => b.classList.remove("active"));
+      panels.forEach((p) => p.classList.remove("active"));
+      btn.classList.add("active");
+      document.querySelector(`.panel[data-panel="${btn.dataset.tab}"]`).classList.add("active");
+    });
+  });
+
+  // === Settings tab ===
+  const settingsInfo = document.getElementById("settingsInfo");
+  const saveSettingsBtn = document.getElementById("saveSettingsBtn");
+  const loadSettingsBtn = document.getElementById("loadSettingsBtn");
+
+  loadSettingsBtn.addEventListener("click", async () => {
+    const password = document.getElementById("settingsPassword").value;
+    if (!password) {
+      settingsInfo.textContent = "Isi password dulu.";
+      return;
+    }
+    settingsInfo.textContent = "Memuat...";
+    try {
+      const res = await fetch("/api/settings", {
+        headers: { "x-upload-password": password },
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        settingsInfo.textContent = data.error || "Gagal memuat settings.";
+        return;
+      }
+      document.getElementById("userId").value = data.userId || "";
+      document.getElementById("groupId").value = data.groupId || "";
+      settingsInfo.textContent = `API Key aktif: ${
+        data.hasApiKey ? data.apiKeyMasked : "belum diisi"
+      } | User ID: ${data.userId || "-"} | Group ID: ${data.groupId || "-"}`;
+    } catch (err) {
+      settingsInfo.textContent = "Gagal konek ke server: " + err.message;
+    }
+  });
+
+  saveSettingsBtn.addEventListener("click", async () => {
+    const password = document.getElementById("settingsPassword").value;
+    const apiKey = document.getElementById("apiKey").value;
+    const userId = document.getElementById("userId").value;
+    const groupId = document.getElementById("groupId").value;
+
+    if (!password) {
+      settingsInfo.textContent = "Isi password dulu.";
+      return;
+    }
+
+    saveSettingsBtn.disabled = true;
+    saveSettingsBtn.textContent = "Menyimpan...";
+    settingsInfo.textContent = "Menyimpan settings...";
+
+    try {
+      const res = await fetch("/api/settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ password, apiKey, userId, groupId }),
+      });
+      const data = await res.json();
+      if (!res.ok || data.error) {
+        settingsInfo.textContent = data.error || "Gagal menyimpan.";
+      } else {
+        document.getElementById("apiKey").value = "";
+        settingsInfo.textContent = `✅ Tersimpan! API Key: ${data.apiKeyMasked} | User ID: ${
+          data.userId || "-"
+        } | Group ID: ${data.groupId || "-"}`;
+      }
+    } catch (err) {
+      settingsInfo.textContent = "Gagal konek ke server: " + err.message;
+    } finally {
+      saveSettingsBtn.disabled = false;
+      saveSettingsBtn.textContent = "Simpan Settings";
+    }
+  });
+
+  // === Upload tab ===
+  const form = document.getElementById("uploadForm");
+  const fileInput = document.getElementById("fileInput");
+  const filenameEl = document.getElementById("filename");
+  const dropzone = document.getElementById("dropzone");
+  const statusEl = document.getElementById("status");
+  const submitBtn = document.getElementById("submitBtn");
+
+  fileInput.addEventListener("change", () => {
+    if (fileInput.files.length > 0) {
+      filenameEl.textContent = fileInput.files[0].name;
+      dropzone.classList.add("filled");
+    }
+  });
+
+  function setStatus(type, message) {
+    statusEl.className = "status show " + type;
+    statusEl.textContent = message;
+  }
+
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+
+    const file = fileInput.files[0];
+    if (!file) return;
+
+    const formData = new FormData();
+    formData.append("password", document.getElementById("password").value);
+    formData.append("displayName", document.getElementById("displayName").value);
+    formData.append("description", document.getElementById("description").value);
+    formData.append("file", file);
+
+    submitBtn.disabled = true;
+    submitBtn.textContent = "Mengupload...";
+    setStatus("loading", "Sedang upload & menunggu proses Roblox, jangan tutup halaman ini...");
+
+    try {
+      const res = await fetch("/api/upload", {
+        method: "POST",
+        body: formData,
+      });
+      const data = await res.json();
+
+      if (!res.ok || data.error) {
+        setStatus("error", data.error || "Terjadi kesalahan.");
+      } else if (data.success) {
+        setStatus(
+          "success",
+          `✅ Berhasil! Asset ID: ${data.assetId}. Cari di tab "Model" Toolbox Studio kamu.`
+        );
+        form.reset();
+        filenameEl.textContent = "";
+        dropzone.classList.remove("filled");
+      } else {
+        setStatus("error", data.message || "Upload selesai tapi ada masalah, cek log.");
+      }
+    } catch (err) {
+      setStatus("error", "Gagal konek ke server: " + err.message);
+    } finally {
+      submitBtn.disabled = false;
+      submitBtn.textContent = "Upload ke Roblox";
+    }
+  });
+</script>
+</body>
+</html>
