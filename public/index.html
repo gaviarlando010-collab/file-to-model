@@ -165,6 +165,25 @@
   .statusPill.rejected{ color: var(--err); border-color: #5a2a2a; background: rgba(239,106,106,0.08); }
   .statusPill.unknown{ color: var(--text-dim); }
   .histActions{ display:flex; gap:6px; }
+
+  .authbox{ display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+  .authbox .badge{ font-size:12px; }
+  .authbox .badge.saved{ color: var(--accent); border-color: var(--accent-dim); background: rgba(95,224,201,0.08); }
+  button.robloxLogin{
+    background: var(--accent); color:#08211c; border:none; border-radius:6px;
+    padding:8px 14px; font-family:'Space Grotesk',sans-serif; font-weight:600; font-size:12.5px;
+    cursor:pointer; transition: filter .15s;
+  }
+  button.robloxLogin:hover{ filter: brightness(1.08); }
+  button.robloxLogout{
+    background: transparent; color: var(--text-dim); border:1px solid var(--border); border-radius:6px;
+    padding:8px 14px; font-family:'JetBrains Mono',monospace; font-size:12px; cursor:pointer;
+  }
+  button.robloxLogout:hover{ color: var(--err); border-color: var(--err); }
+  .loginGate{
+    border:1px dashed var(--border); border-radius:8px; padding:14px; text-align:center;
+    color: var(--text-dim); font-size:13px; margin-bottom:16px;
+  }
 </style>
 </head>
 <body>
@@ -174,7 +193,11 @@
       <div class="brand">model<span>uploader</span></div>
       <div class="sub">Open Cloud Assets API &middot; Model &middot; Animation &middot; Audio</div>
     </div>
-    <span class="badge" id="savedBadge">belum ada data tersimpan</span>
+    <div class="authbox" id="authBox">
+      <span class="badge" id="authStatus">Memeriksa status login&hellip;</span>
+      <button type="button" class="robloxLogin" id="loginBtn" style="display:none;">Login dengan Roblox</button>
+      <button type="button" class="robloxLogout" id="logoutBtn" style="display:none;">Logout</button>
+    </div>
   </header>
 
   <div class="tabs">
@@ -235,8 +258,8 @@
 
         <div class="field">
           <label>Your User ID</label>
-          <input type="text" id="myUserId" placeholder="Contoh: 1234567" />
-          <div class="hint">User ID akun kamu &mdash; dipakai juga untuk mendeteksi grup yang kamu kelola.</div>
+          <input type="text" id="myUserId" placeholder="Login dulu supaya terisi otomatis" readonly />
+          <div class="hint">Otomatis terisi dari akun Roblox yang login &mdash; dipakai juga untuk mendeteksi grup yang kamu kelola.</div>
         </div>
 
         <div class="field" id="userIdField">
@@ -253,11 +276,9 @@
           <div class="hint">Otomatis nampilin grup di mana kamu Owner/Admin/Developer (atau rank &ge; 200).</div>
         </div>
 
-        <h2 style="margin-top:24px;">03 &middot; Kredensial</h2>
-        <div class="field">
-          <label>Open Cloud API Key</label>
-          <input type="password" id="apiKey" placeholder="API key dari Creator Hub" />
-          <div class="hint">Disimpan di browser perangkat ini saja (localStorage).</div>
+        <h2 style="margin-top:24px;">03 &middot; Akses Roblox</h2>
+        <div class="loginGate" id="uploadLoginGate">
+          Belum login. Klik <b>Login dengan Roblox</b> di pojok kanan atas untuk memberi izin upload ke akunmu.
         </div>
 
         <button class="primary" id="uploadBtn">Upload ke Roblox</button>
@@ -308,11 +329,9 @@
           </div>
         </div>
 
-        <h2 style="margin-top:24px;">03 &middot; Kredensial</h2>
-        <div class="field">
-          <label>Open Cloud API Key</label>
-          <input type="password" id="placeApiKey" placeholder="Boleh sama dengan API key di tab Upload" />
-          <div class="hint">Key butuh izin <b>universe-places:write</b>. Disimpan di perangkat ini saja.</div>
+        <h2 style="margin-top:24px;">03 &middot; Akses Roblox</h2>
+        <div class="loginGate" id="placeLoginGate">
+          Belum login. Klik <b>Login dengan Roblox</b> di pojok kanan atas &mdash; pastikan izinkan scope <b>universe-place:write</b> saat login.
         </div>
 
         <button class="primary" id="publishPlaceBtn">Publish Place</button>
@@ -371,18 +390,21 @@
   const groupIdField = document.getElementById('groupIdField');
   const groupSelect = document.getElementById('groupSelect');
   const loadGroupsBtn = document.getElementById('loadGroupsBtn');
-  const apiKey = document.getElementById('apiKey');
   const uploadBtn = document.getElementById('uploadBtn');
   const clearBtn = document.getElementById('clearBtn');
   const jsonPreview = document.getElementById('jsonPreview');
   const log = document.getElementById('log');
-  const savedBadge = document.getElementById('savedBadge');
   const modeSingle = document.getElementById('modeSingle');
   const modeBulk = document.getElementById('modeBulk');
   const manualAssetId = document.getElementById('manualAssetId');
   const manualCheckBtn = document.getElementById('manualCheckBtn');
   const historyList = document.getElementById('historyList');
   const historyEmpty = document.getElementById('historyEmpty');
+  const authStatus = document.getElementById('authStatus');
+  const loginBtn = document.getElementById('loginBtn');
+  const logoutBtn = document.getElementById('logoutBtn');
+  const uploadLoginGate = document.getElementById('uploadLoginGate');
+  const placeLoginGate = document.getElementById('placeLoginGate');
 
   const typeButtons = { Model: document.getElementById('typeModel'), Animation: document.getElementById('typeAnimation'), Audio: document.getElementById('typeAudio') };
   const TYPE_CONFIG = {
@@ -395,6 +417,50 @@
   let assetType = 'Model';
   let bulkMode = false;
   let selectedFiles = []; // array of File
+  let currentUser = null; // { id, username, displayName } kalau sudah login Roblox
+
+  // ---------- Login dengan Roblox (OAuth2) ----------
+  async function refreshAuthStatus(){
+    try {
+      const res = await fetch('/auth/me');
+      const data = await res.json();
+      if (data.loggedIn) {
+        currentUser = data.user;
+        authStatus.textContent = 'Login sebagai ' + (currentUser.username || currentUser.id);
+        authStatus.classList.add('saved');
+        loginBtn.style.display = 'none';
+        logoutBtn.style.display = 'inline-block';
+        myUserId.value = currentUser.id;
+        if (!creatorId.value) creatorId.value = currentUser.id;
+        uploadLoginGate.style.display = 'none';
+        placeLoginGate.style.display = 'none';
+      } else {
+        currentUser = null;
+        authStatus.textContent = data.oauthConfigured === false
+          ? 'OAuth belum dikonfigurasi di server (.env)'
+          : 'Belum login Roblox';
+        authStatus.classList.remove('saved');
+        loginBtn.style.display = 'inline-block';
+        logoutBtn.style.display = 'none';
+        myUserId.value = '';
+        uploadLoginGate.style.display = 'block';
+        placeLoginGate.style.display = 'block';
+      }
+      updatePreview();
+    } catch (e) {
+      authStatus.textContent = 'Gagal cek status login';
+    }
+  }
+  loginBtn.addEventListener('click', () => { window.location.href = '/auth/login'; });
+  logoutBtn.addEventListener('click', async () => {
+    logoutBtn.disabled = true;
+    try {
+      await fetch('/auth/logout', { method: 'POST' });
+    } catch (e) {}
+    logoutBtn.disabled = false;
+    await refreshAuthStatus();
+    addLog('Berhasil logout dari Roblox.', 'warn');
+  });
 
   // ---------- Tabs ----------
   tabs.forEach(btn => btn.addEventListener('click', () => {
@@ -411,8 +477,6 @@
       const raw = localStorage.getItem(STORAGE_KEY);
       if (!raw) return;
       const p = JSON.parse(raw);
-      if (p.apiKey) apiKey.value = p.apiKey;
-      if (p.myUserId) myUserId.value = p.myUserId;
       if (p.creatorId) creatorId.value = p.creatorId;
       if (p.creatorType) setCreatorType(p.creatorType, true);
       if (p.assetType) setAssetType(p.assetType, true);
@@ -423,17 +487,11 @@
         opt.selected = true;
         groupSelect.appendChild(opt);
       }
-      if (p.apiKey || p.creatorId || p.myUserId) {
-        savedBadge.textContent = 'data tersimpan dimuat';
-        savedBadge.classList.add('saved');
-      }
     } catch (e) {}
   }
   function savePrefs(extra){
     const selectedGroupOpt = groupSelect.options[groupSelect.selectedIndex];
     const prefs = {
-      apiKey: apiKey.value,
-      myUserId: myUserId.value,
       creatorId: creatorId.value,
       creatorType, assetType,
       groupId: creatorType === 'group' ? groupSelect.value : undefined,
@@ -441,19 +499,15 @@
       ...extra,
     };
     localStorage.setItem(STORAGE_KEY, JSON.stringify(prefs));
-    savedBadge.textContent = 'tersimpan di perangkat ini';
-    savedBadge.classList.add('saved');
   }
-  [apiKey, myUserId, creatorId].forEach(el => el.addEventListener('input', () => { savePrefs(); updatePreview(); }));
+  [creatorId].forEach(el => el.addEventListener('input', () => { savePrefs(); updatePreview(); }));
   groupSelect.addEventListener('change', () => { savePrefs(); updatePreview(); });
 
   clearBtn.addEventListener('click', () => {
     localStorage.removeItem(STORAGE_KEY);
-    apiKey.value = ''; myUserId.value = ''; creatorId.value = '';
+    creatorId.value = '';
     groupSelect.innerHTML = '<option value="">-- muat daftar grup dulu --</option>';
-    savedBadge.textContent = 'belum ada data tersimpan';
-    savedBadge.classList.remove('saved');
-    addLog('Data tersimpan di perangkat ini sudah dihapus.', 'warn');
+    addLog('Data tersimpan di perangkat ini sudah dihapus (tidak memengaruhi status login Roblox).', 'warn');
     updatePreview();
   });
 
@@ -639,7 +693,7 @@
   // ---------- Upload (satuan & bulk pakai jalur yang sama) ----------
   uploadBtn.addEventListener('click', async () => {
     if (!selectedFiles.length) return addLog('Pilih file terlebih dahulu.', 'err');
-    if (!apiKey.value) return addLog('Isi Open Cloud API Key.', 'err');
+    if (!currentUser) return addLog('Login dengan Roblox dulu (tombol di pojok kanan atas).', 'err');
     const target = currentCreatorId();
     if (!target) return addLog('Isi/pilih User ID atau Group tujuan.', 'err');
 
@@ -654,7 +708,6 @@
       try {
         const form = new FormData();
         form.append('file', file);
-        form.append('apiKey', apiKey.value);
         form.append('assetType', assetType);
         form.append('displayName', nameForFile);
         form.append('description', description.value || '');
@@ -666,6 +719,7 @@
 
         if (!res.ok) {
           addLog('[' + (i+1) + '/' + selectedFiles.length + '] Gagal: ' + (data.error || 'ditolak Roblox'), 'err');
+          if (data.needLogin) { await refreshAuthStatus(); break; }
           continue;
         }
         addLog('[' + (i+1) + '/' + selectedFiles.length + '] Diterima, menunggu moderasi&hellip;', 'ok');
@@ -683,7 +737,7 @@
     for (let i = 0; i < 30; i++) {
       await new Promise(r => setTimeout(r, 2000));
       try {
-        const res = await fetch('/api/operation?opPath=' + encodeURIComponent(opPath), { headers: { 'x-api-key': apiKey.value } });
+        const res = await fetch('/api/operation?opPath=' + encodeURIComponent(opPath));
         const data = await res.json();
         if (!res.ok) { addLog('Gagal cek status: ' + (data.error || ''), 'err'); return; }
 
@@ -767,10 +821,10 @@
   }
 
   async function checkAssetStatus(assetId, btnEl){
-    if (!apiKey.value) { addLog('Isi API Key di tab Upload dulu untuk cek status.', 'err'); return; }
+    if (!currentUser) { addLog('Login dengan Roblox dulu untuk cek status.', 'err'); return; }
     if (btnEl) { btnEl.disabled = true; btnEl.textContent = 'Mengecek...'; }
     try {
-      const res = await fetch('/api/asset-status?assetId=' + encodeURIComponent(assetId), { headers: { 'x-api-key': apiKey.value } });
+      const res = await fetch('/api/asset-status?assetId=' + encodeURIComponent(assetId));
       const data = await res.json();
       if (!res.ok) { alert('Gagal cek status: ' + (data.error || '')); return; }
       const state = data.moderationResult ? data.moderationResult.moderationState : 'UNKNOWN';
@@ -799,7 +853,6 @@
   const placeId = document.getElementById('placeId');
   const vtPublished = document.getElementById('vtPublished');
   const vtSaved = document.getElementById('vtSaved');
-  const placeApiKey = document.getElementById('placeApiKey');
   const publishPlaceBtn = document.getElementById('publishPlaceBtn');
   const placeJsonPreview = document.getElementById('placeJsonPreview');
   const placeLog = document.getElementById('placeLog');
@@ -813,17 +866,16 @@
       const raw = localStorage.getItem(PLACE_STORAGE_KEY);
       if (!raw) return;
       const p = JSON.parse(raw);
-      if (p.apiKey) placeApiKey.value = p.apiKey;
       if (p.universeId) universeId.value = p.universeId;
       if (p.placeId) placeId.value = p.placeId;
     } catch (e) {}
   }
   function savePlacePrefs(){
     localStorage.setItem(PLACE_STORAGE_KEY, JSON.stringify({
-      apiKey: placeApiKey.value, universeId: universeId.value, placeId: placeId.value,
+      universeId: universeId.value, placeId: placeId.value,
     }));
   }
-  [placeApiKey, universeId, placeId].forEach(el => el.addEventListener('input', () => { savePlacePrefs(); updatePlacePreview(); }));
+  [universeId, placeId].forEach(el => el.addEventListener('input', () => { savePlacePrefs(); updatePlacePreview(); }));
 
   vtPublished.addEventListener('click', () => { versionType = 'Published'; vtPublished.classList.add('active'); vtSaved.classList.remove('active'); updatePlacePreview(); });
   vtSaved.addEventListener('click', () => { versionType = 'Saved'; vtSaved.classList.add('active'); vtPublished.classList.remove('active'); updatePlacePreview(); });
@@ -869,7 +921,7 @@
 
   publishPlaceBtn.addEventListener('click', async () => {
     if (!placeFile) return addPlaceLog('Pilih file .rbxl/.rbxlx dulu.', 'err');
-    if (!placeApiKey.value) return addPlaceLog('Isi Open Cloud API Key.', 'err');
+    if (!currentUser) return addPlaceLog('Login dengan Roblox dulu (tombol di pojok kanan atas).', 'err');
     if (!universeId.value || !placeId.value) return addPlaceLog('Isi Universe ID dan Place ID.', 'err');
 
     publishPlaceBtn.disabled = true;
@@ -879,7 +931,6 @@
     try {
       const form = new FormData();
       form.append('file', placeFile);
-      form.append('apiKey', placeApiKey.value);
       form.append('universeId', universeId.value);
       form.append('placeId', placeId.value);
       form.append('versionType', versionType);
@@ -889,6 +940,7 @@
 
       if (!res.ok) {
         addPlaceLog('Gagal: ' + (data.error || 'Roblox menolak publish.'), 'err');
+        if (data.needLogin) await refreshAuthStatus();
         if (data.detail) addPlaceLog(JSON.stringify(data.detail), 'warn');
         return;
       }
@@ -907,6 +959,7 @@
   updatePreview();
   updatePlacePreview();
   renderHistory();
+  refreshAuthStatus();
 </script>
 </body>
 </html>
