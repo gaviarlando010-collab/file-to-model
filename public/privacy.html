@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Kebijakan Privasi &mdash; Model Uploader</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg: #0e1013; --panel: #16191f; --border: #262b35;
+    --text: #e9e7e2; --text-dim: #8b90a0; --accent: #5fe0c9;
+  }
+  *{ box-sizing:border-box; }
+  body{ margin:0; background:var(--bg); color:var(--text); font-family:'Inter',system-ui,sans-serif; line-height:1.65; }
+  .wrap{ max-width:760px; margin:0 auto; padding:48px 20px 80px; }
+  h1{ font-family:'Space Grotesk',sans-serif; font-size:26px; margin-bottom:4px; }
+  .updated{ color:var(--text-dim); font-size:13px; margin-bottom:32px; }
+  h2{ font-family:'Space Grotesk',sans-serif; font-size:16px; color:var(--accent); margin-top:32px; margin-bottom:10px; }
+  p, li{ color:#cfd2da; font-size:14.5px; }
+  ul{ padding-left:20px; }
+  a{ color:var(--accent); }
+  .box{ background:var(--panel); border:1px solid var(--border); border-radius:10px; padding:20px 24px; margin-top:10px; }
+  .back{ display:inline-block; margin-top:40px; color:var(--text-dim); font-size:13px; text-decoration:none; border:1px solid var(--border); padding:8px 16px; border-radius:6px; }
+  .back:hover{ color:var(--accent); border-color:var(--accent); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Kebijakan Privasi</h1>
+  <div class="updated">Berlaku untuk aplikasi <strong>Model Uploader</strong> (OAuth App Roblox)</div>
+
+  <p>Model Uploader adalah tool pribadi untuk mengunggah aset (Model, Animation,
+  Audio) dan mem-publish Place ke Roblox lewat Open Cloud API, menggunakan
+  fitur <strong>Login dengan Roblox (OAuth2)</strong> sebagai satu-satunya
+  metode otentikasi.</p>
+
+  <h2>Data yang kami akses</h2>
+  <div class="box">
+    <p>Saat kamu login lewat Roblox, sesuai cakupan (scope) yang kamu setujui,
+    aplikasi ini menerima dari Roblox:</p>
+    <ul>
+      <li><strong>openid, profile</strong> &mdash; User ID, username, dan nama tampilan akun kamu.</li>
+      <li><strong>asset:read / asset:write</strong> &mdash; izin melihat & mengunggah aset ke akun/grup kamu.</li>
+      <li><strong>universe-place:write</strong> &mdash; izin mem-publish versi Place pada experience yang kamu tentukan sendiri.</li>
+      <li><strong>group:read</strong> &mdash; daftar grup Roblox tempat kamu punya peran Owner/Admin/Developer, dipakai untuk mengisi pilihan "upload sebagai Group".</li>
+    </ul>
+  </div>
+
+  <h2>Cara kami menyimpan data</h2>
+  <div class="box">
+    <ul>
+      <li>Access token & refresh token dari Roblox disimpan di <strong>sesi server</strong> (cookie terenkripsi, <code>httpOnly</code>), <strong>tidak pernah</strong> dikirim ke browser dalam bentuk terbaca atau disimpan di localStorage.</li>
+      <li>Kami <strong>tidak pernah</strong> meminta atau menyimpan password Roblox kamu maupun cookie sesi (<code>.ROBLOSECURITY</code>) &mdash; semua login terjadi langsung di halaman resmi roblox.com.</li>
+      <li>Preferensi non-sensitif (misal User ID/Group ID target upload terakhir, jenis aset terakhir dipilih) disimpan di <code>localStorage</code> browser kamu sendiri, tidak dikirim ke server manapun selain saat kamu melakukan aksi upload.</li>
+      <li>File yang kamu upload (.rbxm/.rbxmx/.mp3/.ogg/.rbxl/.rbxlx) diteruskan langsung ke Roblox Open Cloud API dan tidak disimpan permanen di server kami.</li>
+    </ul>
+  </div>
+
+  <h2>Cara mencabut akses</h2>
+  <div class="box">
+    <p>Kamu bisa mencabut akses aplikasi ini kapan saja lewat:</p>
+    <ul>
+      <li>Tombol <strong>Logout</strong> di aplikasi ini, atau</li>
+      <li>Halaman Roblox: <strong>Settings &rarr; Security &rarr; Manage Authorized Third-Party Apps</strong>, cari nama aplikasi ini lalu klik Revoke.</li>
+    </ul>
+  </div>
+
+  <h2>Kontak</h2>
+  <p>Untuk pertanyaan terkait privasi, hubungi pengembang aplikasi ini melalui akun Roblox pemilik aplikasi.</p>
+
+  <a class="back" href="/">&larr; Kembali ke aplikasi</a>
+</div>
+</body>
+</html>
