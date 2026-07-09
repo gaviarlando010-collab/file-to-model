@@ -449,13 +449,11 @@ app.get("/api/asset-status", requireAuth, async (req, res) => {
 //
 // Dipakai kalau Roblox nolak publish/distribusi karena model kamu menyimpan
 // referensi ke gambar/suara/mesh milik orang lain yang nggak terdaftar/tidak
-// bisa didistribusi ulang. Fitur ini BUKAN edit-bytes asal tebak -- pakai
-// library "rbxm-parser-ts" yang beneran parse struktur biner .rbxm, jadi
-// aman dari resiko file corrupt (kalau parsing gagal, kita kasih tau jelas,
-// nggak maksa nulis ulang file yang rusak).
-//
-// Daftar class + property yang mengandung referensi aset (ContentId/Content).
-// Kalau ke depannya nemu jenis lain yang perlu ditambah, tinggal extend array ini.
+// bisa didistribusi ulang, atau kalau file kamu kedeteksi jadi Package bukan
+// Model. Fitur ini pakai library "rbxm-parser-ts" (diinstall langsung dari
+// GitHub karena nggak terdaftar di npm registry dengan nama yang sama) yang
+// beneran parse struktur biner .rbxm -- kalau parsing gagal, kita kasih tau
+// jelas, nggak maksa nulis ulang file yang berpotensi rusak.
 const CONTENT_PROPS = [
   { class: "ImageLabel", props: ["Image"] },
   { class: "ImageButton", props: ["Image", "HoverImage", "PressedImage"] },
@@ -471,7 +469,7 @@ const CONTENT_PROPS = [
 function contentValueToString(v) {
   if (v == null) return "";
   if (typeof v === "string") return v;
-  if (typeof v === "object" && typeof v.Uri === "string") return v.Uri; // beberapa versi Content struct
+  if (typeof v === "object" && typeof v.Uri === "string") return v.Uri;
   try { return String(v); } catch { return ""; }
 }
 
@@ -482,7 +480,7 @@ function scanRobloxFile(file) {
     try {
       instances = file.FindChildrenOfClass(className) || [];
     } catch (e) {
-      continue; // class ini nggak didukung library / nggak ada di file, lewati
+      continue;
     }
     for (const inst of instances) {
       for (const prop of props) {
@@ -502,8 +500,6 @@ function scanRobloxFile(file) {
   return found;
 }
 
-// Cari semua instance PackageLink -- ini "penanda" yang bikin Roblox nganggep
-// sebuah Model jadi Package. Kembalikan jumlahnya buat ditampilkan di UI.
 function countPackageLinks(file) {
   try {
     return (file.FindChildrenOfClass("PackageLink") || []).length;
@@ -512,17 +508,12 @@ function countPackageLinks(file) {
   }
 }
 
-// Hapus semua instance PackageLink dari tree, supaya file balik jadi Model
-// murni (bukan Package) waktu diupload ulang. Beberapa strategi dicoba
-// karena kita nggak bisa mastiin persis API "hapus instance" di library ini
-// tanpa uji coba langsung -- kalau semua strategi gagal, dilaporkan jelas
-// daripada diam-diam nggak berhasil.
 function removePackageLinks(file) {
   let instances = [];
   try {
     instances = file.FindChildrenOfClass("PackageLink") || [];
   } catch (e) {
-    return { removed: 0, error: "Class PackageLink tidak didukung library parser." };
+    return { removed: 0, total: 0, error: "Class PackageLink tidak didukung library parser." };
   }
   let removed = 0;
   const errors = [];
@@ -540,7 +531,6 @@ function removePackageLinks(file) {
   return { removed, total: instances.length, errors };
 }
 
-// Scan: upload .rbxm, dapatkan daftar semua referensi aset + info Package di dalamnya
 app.post("/api/rbxm/scan", upload.single("file"), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: "File .rbxm wajib dipilih." });
@@ -567,7 +557,6 @@ app.post("/api/rbxm/scan", upload.single("file"), async (req, res) => {
   }
 });
 
-// Clean: upload .rbxm + daftar {class, property} yang mau dikosongkan, balikin file baru
 app.post("/api/rbxm/clean", upload.single("file"), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: "File .rbxm wajib dipilih." });
@@ -635,8 +624,6 @@ app.post("/api/rbxm/clean", upload.single("file"), async (req, res) => {
   }
 });
 
-// Unpack: hapus semua instance PackageLink dari file, supaya balik jadi Model
-// murni (bukan Package) waktu diupload ulang lewat tab Upload Aset.
 app.post("/api/rbxm/unpack", upload.single("file"), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: "File .rbxm wajib dipilih." });
