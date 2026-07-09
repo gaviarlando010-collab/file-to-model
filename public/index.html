@@ -204,7 +204,7 @@
     <button type="button" class="active" data-tab="upload">Upload Aset</button>
     <button type="button" data-tab="place">Publish Place</button>
     <button type="button" data-tab="monitor">Monitor Status</button>
-    <button type="button" data-tab="cleaner">Bersihkan Model</button>
+    <button type="button" data-tab="pkgcheck">Cek Package</button>
   </div>
 
   <!-- ===================== TAB: UPLOAD ===================== -->
@@ -379,41 +379,30 @@
     </div>
   </div>
 
-  <!-- ===================== TAB: BERSIHKAN MODEL ===================== -->
-  <div class="tabpanel" id="tab-cleaner">
+  <!-- ===================== TAB: CEK PACKAGE ===================== -->
+  <div class="tabpanel" id="tab-pkgcheck">
     <div class="panel">
-      <h2>01 &middot; Bersihkan Aset Bermasalah di .rbxm</h2>
+      <h2>01 &middot; Cek Isi File .rbxm</h2>
       <div class="hint" style="margin-bottom:16px;">
-        Buat kasus model kamu gagal di-publish/distribusi karena "Aset yang tidak didukung"
-        (referensi gambar/suara/mesh milik orang lain), atau kedeteksi jadi Package.
-        Upload file <b>.rbxm</b>-nya, tool ini scan isi di dalamnya, kamu pilih mana yang
-        mau dibersihkan, lalu download hasilnya untuk diupload ulang.
+        Scan struktur file <b>.rbxm</b> kamu -- lihat semua jenis instance (class) di dalamnya
+        dan berapa jumlahnya, termasuk <b>PackageLink</b> (penyebab file kamu kedeteksi Package).
+        Fitur ini <b>cuma baca</b> file kamu, tidak pernah menulis/mengubah apapun, jadi 100% aman
+        dari resiko file jadi corrupt -- dibangun sendiri tanpa library luar.
       </div>
 
       <div class="field">
         <label>File .rbxm</label>
-        <input type="file" id="cleanerFileInput" accept=".rbxm" />
+        <input type="file" id="pkgFileInput" accept=".rbxm" />
       </div>
-      <button class="primary" id="cleanerScanBtn">Scan File</button>
+      <button class="primary" id="pkgScanBtn">Scan File</button>
 
-      <div id="packageSection" style="display:none; margin-top:20px;">
-        <h2>Package Terdeteksi</h2>
-        <div class="loginGate" style="border-color:#c77; color:#f2b8b8;">
-          File ini mengandung <b><span id="packageLinkCount">0</span> PackageLink</b> &mdash; ini instance kecil "penanda" yang bikin Roblox nganggep file kamu jadi <b>Package</b>, bukan Model. Konten model kamu (Part, mesh, GUI, script, dll) <b>tidak akan diubah/dihapus sama sekali</b> &mdash; cuma penanda ini yang dilepas, sama persis kayak klik "Unpack" di Roblox Studio.
-        </div>
-        <button class="primary" id="unpackBtn" style="margin-top:10px;">Convert ke Model Penuh</button>
+      <div id="pkgResult" style="margin-top:20px; display:none;">
+        <div id="pkgSummary" style="margin-bottom:14px;"></div>
+        <h2>Daftar Class di Dalam File</h2>
+        <div id="pkgClassList" style="font-family:'JetBrains Mono',monospace; font-size:12.5px;"></div>
       </div>
 
-      <div id="cleanerResults" style="margin-top:20px; display:none;">
-        <h2>02 &middot; Hasil Scan</h2>
-        <div class="hint" style="margin-bottom:10px;">
-          Centang aset yang mau dihapus (misal yang bukan punya kamu / kena tolak Roblox).
-        </div>
-        <div id="cleanerItems"></div>
-        <button class="primary" id="cleanerCleanBtn" style="margin-top:16px;">Bersihkan & Download</button>
-      </div>
-
-      <div id="cleanerLog" style="margin-top:16px;"></div>
+      <div id="pkgLog" style="margin-top:16px;"></div>
     </div>
   </div>
 </div>
@@ -424,7 +413,7 @@
 
   // --- element refs ---
   const tabs = document.querySelectorAll('.tabs button');
-  const tabpanels = { upload: document.getElementById('tab-upload'), place: document.getElementById('tab-place'), monitor: document.getElementById('tab-monitor'), cleaner: document.getElementById('tab-cleaner') };
+  const tabpanels = { upload: document.getElementById('tab-upload'), place: document.getElementById('tab-place'), monitor: document.getElementById('tab-monitor'), pkgcheck: document.getElementById('tab-pkgcheck') };
 
   const dropzone = document.getElementById('dropzone');
   const fileInput = document.getElementById('fileInput');
@@ -1011,135 +1000,49 @@
     }
   });
 
-  // ---------- Tab: Bersihkan Model (.rbxm scanner/cleaner) ----------
-  const cleanerFileInput = document.getElementById('cleanerFileInput');
-  const cleanerScanBtn = document.getElementById('cleanerScanBtn');
-  const cleanerResults = document.getElementById('cleanerResults');
-  const cleanerItems = document.getElementById('cleanerItems');
-  const cleanerCleanBtn = document.getElementById('cleanerCleanBtn');
-  const cleanerLog = document.getElementById('cleanerLog');
-  const packageSection = document.getElementById('packageSection');
-  const packageLinkCount = document.getElementById('packageLinkCount');
-  const unpackBtn = document.getElementById('unpackBtn');
-  let cleanerScanned = [];
+  // ---------- Tab: Cek Package (scan-only, read-only, no deps) ----------
+  const pkgFileInput = document.getElementById('pkgFileInput');
+  const pkgScanBtn = document.getElementById('pkgScanBtn');
+  const pkgResult = document.getElementById('pkgResult');
+  const pkgSummary = document.getElementById('pkgSummary');
+  const pkgClassList = document.getElementById('pkgClassList');
+  const pkgLog = document.getElementById('pkgLog');
 
-  function cleanerLogMsg(msg, type){
+  function pkgLogMsg(msg, type){
     const div = document.createElement('div');
     div.className = 'logline' + (type ? ' ' + type : '');
     div.innerHTML = msg;
-    cleanerLog.appendChild(div);
+    pkgLog.appendChild(div);
   }
 
-  cleanerScanBtn.addEventListener('click', async () => {
-    const f = cleanerFileInput.files[0];
-    if (!f) { cleanerLog.innerHTML = ''; return cleanerLogMsg('Pilih file .rbxm dulu.', 'err'); }
-    cleanerLog.innerHTML = '';
-    cleanerResults.style.display = 'none';
-    cleanerScanBtn.disabled = true;
-    cleanerLogMsg('Membaca & scan file&hellip;');
+  pkgScanBtn.addEventListener('click', async () => {
+    const f = pkgFileInput.files[0];
+    if (!f) { pkgLog.innerHTML = ''; return pkgLogMsg('Pilih file .rbxm dulu.', 'err'); }
+    pkgLog.innerHTML = '';
+    pkgResult.style.display = 'none';
+    pkgScanBtn.disabled = true;
+    pkgLogMsg('Membaca & parsing struktur file&hellip;');
     try {
       const form = new FormData();
       form.append('file', f);
-      const res = await fetch('/api/rbxm/scan', { method: 'POST', body: form });
+      const res = await fetch('/api/rbxm/scan-classes', { method: 'POST', body: form });
       const data = await res.json();
-      if (!res.ok) { cleanerLogMsg('Gagal: ' + (data.error || 'tidak diketahui'), 'err'); return; }
+      if (!res.ok) { pkgLogMsg('Gagal: ' + (data.error || 'tidak diketahui'), 'err'); return; }
 
-      cleanerScanned = data.items || [];
-      packageSection.style.display = 'none';
+      pkgLogMsg('Berhasil parsing file.', 'ok');
       if (data.packageLinkCount > 0) {
-        packageLinkCount.textContent = data.packageLinkCount;
-        packageSection.style.display = 'block';
+        pkgSummary.innerHTML = '<div class="loginGate" style="border-color:#c77; color:#f2b8b8;">File ini <b>mengandung ' + data.packageLinkCount + ' PackageLink</b> &mdash; ini yang bikin Roblox nganggep file kamu jadi <b>Package</b>, bukan Model. Konten lain (Part, mesh, GUI, dll) tidak terpengaruh oleh temuan ini. Buat convert ke Model penuh, hapus instance PackageLink ini lewat Explorer di Studio Lite (klik kanan objeknya cari opsi Unpack, atau cari langsung object class PackageLink dan hapus).</div>';
+      } else {
+        pkgSummary.innerHTML = '<div class="loginGate" style="border-color:var(--accent-dim); color:var(--accent);">Tidak ditemukan PackageLink di file ini &mdash; kemungkinan besar file ini memang Model murni, bukan Package.</div>';
       }
-      if (!cleanerScanned.length) {
-        cleanerLogMsg('Tidak ditemukan referensi aset gambar/suara/mesh di file ini.', 'warn');
-        return;
-      }
-      cleanerLogMsg('Ditemukan ' + cleanerScanned.length + ' referensi aset.', 'ok');
-      cleanerItems.innerHTML = '';
-      cleanerScanned.forEach((item, i) => {
-        const row = document.createElement('label');
-        row.style.cssText = 'display:flex; align-items:flex-start; gap:10px; padding:10px 0; border-bottom:1px solid var(--border); font-size:12.5px; cursor:pointer;';
-        row.innerHTML =
-          '<input type="checkbox" data-idx="' + i + '" style="width:auto; margin-top:2px;" />' +
-          '<span><b>' + item.class + '</b>' + (item.name ? ' &ldquo;' + item.name + '&rdquo;' : '') +
-          ' &mdash; ' + item.property + '<br><span style="color:var(--text-dim);">' + item.value + '</span></span>';
-        cleanerItems.appendChild(row);
-      });
-      cleanerResults.style.display = 'block';
+      pkgClassList.innerHTML = data.classes.map(c =>
+        '<div style="display:flex; justify-content:space-between; padding:6px 0; border-bottom:1px solid var(--border);"><span' + (c.className === 'PackageLink' ? ' style="color:#f2b8b8; font-weight:600;"' : '') + '>' + c.className + '</span><span style="color:var(--text-dim);">' + c.count + '</span></div>'
+      ).join('');
+      pkgResult.style.display = 'block';
     } catch (err) {
-      cleanerLogMsg('Kesalahan jaringan: ' + err.message, 'err');
+      pkgLogMsg('Kesalahan jaringan: ' + err.message, 'err');
     } finally {
-      cleanerScanBtn.disabled = false;
-    }
-  });
-
-  unpackBtn.addEventListener('click', async () => {
-    const f = cleanerFileInput.files[0];
-    if (!f) return cleanerLogMsg('File hilang, pilih ulang file .rbxm-nya.', 'err');
-
-    unpackBtn.disabled = true;
-    cleanerLogMsg('Menghapus PackageLink & menulis ulang file&hellip;');
-    try {
-      const form = new FormData();
-      form.append('file', f);
-      const res = await fetch('/api/rbxm/unpack', { method: 'POST', body: form });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        cleanerLogMsg('Gagal: ' + (data.error || 'tidak diketahui'), 'err');
-        return;
-      }
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = f.name.replace(/\.rbxm$/i, '') + ' [unpacked].rbxm';
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(url);
-      cleanerLogMsg('Selesai! File hasil Unpack sudah kedownload. Upload ulang lewat tab "Upload Aset" sebagai aset baru -- seharusnya sekarang jadi Model, bukan Package.', 'ok');
-    } catch (err) {
-      cleanerLogMsg('Kesalahan jaringan: ' + err.message, 'err');
-    } finally {
-      unpackBtn.disabled = false;
-    }
-  });
-
-  cleanerCleanBtn.addEventListener('click', async () => {
-    const checked = Array.from(cleanerItems.querySelectorAll('input[type=checkbox]:checked'))
-      .map(cb => cleanerScanned[Number(cb.dataset.idx)])
-      .map(it => ({ class: it.class, property: it.property }));
-    if (!checked.length) return cleanerLogMsg('Centang minimal 1 aset yang mau dihapus.', 'err');
-
-    const f = cleanerFileInput.files[0];
-    if (!f) return cleanerLogMsg('File hilang, pilih ulang file .rbxm-nya.', 'err');
-
-    cleanerCleanBtn.disabled = true;
-    cleanerLogMsg('Membersihkan & menulis ulang file&hellip;');
-    try {
-      const form = new FormData();
-      form.append('file', f);
-      form.append('targets', JSON.stringify(checked));
-      const res = await fetch('/api/rbxm/clean', { method: 'POST', body: form });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        cleanerLogMsg('Gagal: ' + (data.error || 'tidak diketahui'), 'err');
-        return;
-      }
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = f.name.replace(/\.rbxm$/i, '') + ' [cleaned].rbxm';
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(url);
-      cleanerLogMsg('Selesai! File hasil bersih sudah kedownload. Upload ulang lewat tab "Upload Aset" sebagai aset baru.', 'ok');
-    } catch (err) {
-      cleanerLogMsg('Kesalahan jaringan: ' + err.message, 'err');
-    } finally {
-      cleanerCleanBtn.disabled = false;
+      pkgScanBtn.disabled = false;
     }
   });
 
