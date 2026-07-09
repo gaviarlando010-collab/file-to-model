@@ -4,6 +4,7 @@ import path from "path";
 import crypto from "crypto";
 import session from "express-session";
 import { fileURLToPath } from "url";
+import { RobloxFile } from "rbxm-parser-ts";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -438,6 +439,241 @@ app.get("/api/asset-status", requireAuth, async (req, res) => {
     }
 
     res.json(data);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message || "Terjadi kesalahan pada server lokal." });
+  }
+});
+
+// ===================== BERSIHKAN ASET BERMASALAH DI DALAM .rbxm =====================
+//
+// Dipakai kalau Roblox nolak publish/distribusi karena model kamu menyimpan
+// referensi ke gambar/suara/mesh milik orang lain yang nggak terdaftar/tidak
+// bisa didistribusi ulang. Fitur ini BUKAN edit-bytes asal tebak -- pakai
+// library "rbxm-parser-ts" yang beneran parse struktur biner .rbxm, jadi
+// aman dari resiko file corrupt (kalau parsing gagal, kita kasih tau jelas,
+// nggak maksa nulis ulang file yang rusak).
+//
+// Daftar class + property yang mengandung referensi aset (ContentId/Content).
+// Kalau ke depannya nemu jenis lain yang perlu ditambah, tinggal extend array ini.
+const CONTENT_PROPS = [
+  { class: "ImageLabel", props: ["Image"] },
+  { class: "ImageButton", props: ["Image", "HoverImage", "PressedImage"] },
+  { class: "Decal", props: ["Texture"] },
+  { class: "Texture", props: ["Texture"] },
+  { class: "Sound", props: ["SoundId"] },
+  { class: "Animation", props: ["AnimationId"] },
+  { class: "MeshPart", props: ["MeshId", "TextureID"] },
+  { class: "SpecialMesh", props: ["MeshId", "TextureId"] },
+  { class: "SurfaceAppearance", props: ["ColorMap", "MetalnessMap", "NormalMap", "RoughnessMap"] },
+];
+
+function contentValueToString(v) {
+  if (v == null) return "";
+  if (typeof v === "string") return v;
+  if (typeof v === "object" && typeof v.Uri === "string") return v.Uri; // beberapa versi Content struct
+  try { return String(v); } catch { return ""; }
+}
+
+function scanRobloxFile(file) {
+  const found = [];
+  for (const { class: className, props } of CONTENT_PROPS) {
+    let instances = [];
+    try {
+      instances = file.FindChildrenOfClass(className) || [];
+    } catch (e) {
+      continue; // class ini nggak didukung library / nggak ada di file, lewati
+    }
+    for (const inst of instances) {
+      for (const prop of props) {
+        let raw;
+        try { raw = inst[prop]; } catch { continue; }
+        const str = contentValueToString(raw);
+        if (!str) continue;
+        found.push({
+          class: className,
+          name: (() => { try { return inst.Name || ""; } catch { return ""; } })(),
+          property: prop,
+          value: str,
+        });
+      }
+    }
+  }
+  return found;
+}
+
+// Cari semua instance PackageLink -- ini "penanda" yang bikin Roblox nganggep
+// sebuah Model jadi Package. Kembalikan jumlahnya buat ditampilkan di UI.
+function countPackageLinks(file) {
+  try {
+    return (file.FindChildrenOfClass("PackageLink") || []).length;
+  } catch (e) {
+    return 0;
+  }
+}
+
+// Hapus semua instance PackageLink dari tree, supaya file balik jadi Model
+// murni (bukan Package) waktu diupload ulang. Beberapa strategi dicoba
+// karena kita nggak bisa mastiin persis API "hapus instance" di library ini
+// tanpa uji coba langsung -- kalau semua strategi gagal, dilaporkan jelas
+// daripada diam-diam nggak berhasil.
+function removePackageLinks(file) {
+  let instances = [];
+  try {
+    instances = file.FindChildrenOfClass("PackageLink") || [];
+  } catch (e) {
+    return { removed: 0, error: "Class PackageLink tidak didukung library parser." };
+  }
+  let removed = 0;
+  const errors = [];
+  for (const inst of instances) {
+    let ok = false;
+    try { inst.Parent = null; ok = true; } catch (e) { /* coba cara lain */ }
+    if (!ok) {
+      try { if (typeof inst.Destroy === "function") { inst.Destroy(); ok = true; } } catch (e) { /* coba cara lain */ }
+    }
+    if (!ok) {
+      try { if (typeof inst.Remove === "function") { inst.Remove(); ok = true; } } catch (e) { /* gagal semua */ }
+    }
+    if (ok) removed++; else errors.push("Gagal hapus 1 instance PackageLink");
+  }
+  return { removed, total: instances.length, errors };
+}
+
+// Scan: upload .rbxm, dapatkan daftar semua referensi aset + info Package di dalamnya
+app.post("/api/rbxm/scan", upload.single("file"), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: "File .rbxm wajib dipilih." });
+    if (path.extname(req.file.originalname).toLowerCase() !== ".rbxm") {
+      return res.status(400).json({ error: "Fitur ini cuma dukung file .rbxm (biner), bukan .rbxmx." });
+    }
+
+    let file;
+    try {
+      file = RobloxFile.ReadFromBuffer(req.file.buffer);
+    } catch (e) {
+      return res.status(400).json({ error: "Gagal membaca file: " + e.message });
+    }
+    if (!file) {
+      return res.status(400).json({ error: "File tidak valid atau formatnya nggak dikenali." });
+    }
+
+    const found = scanRobloxFile(file);
+    const packageLinkCount = countPackageLinks(file);
+    res.json({ items: found, packageLinkCount });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message || "Terjadi kesalahan pada server lokal." });
+  }
+});
+
+// Clean: upload .rbxm + daftar {class, property} yang mau dikosongkan, balikin file baru
+app.post("/api/rbxm/clean", upload.single("file"), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: "File .rbxm wajib dipilih." });
+
+    let targets = [];
+    try { targets = JSON.parse(req.body.targets || "[]"); } catch { targets = []; }
+    if (!Array.isArray(targets) || !targets.length) {
+      return res.status(400).json({ error: "Pilih minimal 1 item yang mau dibersihkan." });
+    }
+
+    let file;
+    try {
+      file = RobloxFile.ReadFromBuffer(req.file.buffer);
+    } catch (e) {
+      return res.status(400).json({ error: "Gagal membaca file: " + e.message });
+    }
+    if (!file) {
+      return res.status(400).json({ error: "File tidak valid atau formatnya nggak dikenali." });
+    }
+
+    let clearedCount = 0;
+    const failed = [];
+    const byClass = {};
+    for (const t of targets) {
+      if (!byClass[t.class]) byClass[t.class] = new Set();
+      byClass[t.class].add(t.property);
+    }
+
+    for (const className of Object.keys(byClass)) {
+      let instances = [];
+      try {
+        instances = file.FindChildrenOfClass(className) || [];
+      } catch (e) {
+        failed.push(className + ": class tidak didukung library");
+        continue;
+      }
+      for (const inst of instances) {
+        for (const prop of byClass[className]) {
+          try {
+            inst[prop] = "";
+            clearedCount++;
+          } catch (e) {
+            failed.push(className + "." + prop + ": " + e.message);
+          }
+        }
+      }
+    }
+
+    let buffer;
+    try {
+      buffer = file.WriteToBuffer();
+    } catch (e) {
+      return res.status(500).json({ error: "Gagal menulis ulang file setelah dibersihkan: " + e.message });
+    }
+
+    const outName = req.file.originalname.replace(/\.rbxm$/i, "") + " [cleaned].rbxm";
+    res.setHeader("Content-Type", "application/octet-stream");
+    res.setHeader("Content-Disposition", `attachment; filename="${outName.replace(/"/g, "")}"`);
+    res.setHeader("X-Cleared-Count", String(clearedCount));
+    if (failed.length) res.setHeader("X-Failed-Items", encodeURIComponent(JSON.stringify(failed)));
+    res.send(buffer);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message || "Terjadi kesalahan pada server lokal." });
+  }
+});
+
+// Unpack: hapus semua instance PackageLink dari file, supaya balik jadi Model
+// murni (bukan Package) waktu diupload ulang lewat tab Upload Aset.
+app.post("/api/rbxm/unpack", upload.single("file"), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: "File .rbxm wajib dipilih." });
+
+    let file;
+    try {
+      file = RobloxFile.ReadFromBuffer(req.file.buffer);
+    } catch (e) {
+      return res.status(400).json({ error: "Gagal membaca file: " + e.message });
+    }
+    if (!file) {
+      return res.status(400).json({ error: "File tidak valid atau formatnya nggak dikenali." });
+    }
+
+    const result = removePackageLinks(file);
+    if (!result.total) {
+      return res.status(400).json({ error: "Tidak ditemukan PackageLink di file ini -- kemungkinan memang bukan Package." });
+    }
+    if (!result.removed) {
+      return res.status(500).json({
+        error: "Ditemukan " + result.total + " PackageLink, tapi gagal dihapus (library belum dukung operasi ini). Coba cara manual lewat Studio: klik kanan objek -> Unpack.",
+        detail: result.errors,
+      });
+    }
+
+    let buffer;
+    try {
+      buffer = file.WriteToBuffer();
+    } catch (e) {
+      return res.status(500).json({ error: "Berhasil hapus PackageLink tapi gagal menulis ulang file: " + e.message });
+    }
+
+    const outName = req.file.originalname.replace(/\.rbxm$/i, "") + " [unpacked].rbxm";
+    res.setHeader("Content-Type", "application/octet-stream");
+    res.setHeader("Content-Disposition", `attachment; filename="${outName.replace(/"/g, "")}"`);
+    res.setHeader("X-Removed-Count", String(result.removed));
+    res.send(buffer);
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: err.message || "Terjadi kesalahan pada server lokal." });
