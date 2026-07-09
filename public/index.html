@@ -329,9 +329,14 @@
           </div>
         </div>
 
-        <h2 style="margin-top:24px;">03 &middot; Akses Roblox</h2>
+        <h2 style="margin-top:24px;">03 &middot; Open Cloud API Key</h2>
         <div class="loginGate" id="placeLoginGate">
-          Belum login. Klik <b>Login dengan Roblox</b> di pojok kanan atas &mdash; pastikan izinkan scope <b>universe-place:write</b> saat login.
+          Login Roblox kamu tetap dipakai untuk fitur upload aset di tab lain. Untuk publish Place, Roblox belum menyediakan izin lewat OAuth, jadi isi API Key di bawah.
+        </div>
+        <div class="field">
+          <label>Open Cloud API Key</label>
+          <input type="password" id="placeApiKey" placeholder="Khusus fitur ini -- Roblox belum dukung OAuth untuk publish Place" />
+          <div class="hint">Key butuh izin <b>universe-places:write</b>. Buat/lihat di Creator Dashboard &rarr; API Keys. Disimpan di perangkat ini saja (localStorage), tidak dikirim ke mana pun selain saat publish.</div>
         </div>
 
         <button class="primary" id="publishPlaceBtn">Publish Place</button>
@@ -433,7 +438,6 @@
         myUserId.value = currentUser.id;
         if (!creatorId.value) creatorId.value = currentUser.id;
         uploadLoginGate.style.display = 'none';
-        placeLoginGate.style.display = 'none';
       } else {
         currentUser = null;
         authStatus.textContent = data.oauthConfigured === false
@@ -444,7 +448,6 @@
         logoutBtn.style.display = 'none';
         myUserId.value = '';
         uploadLoginGate.style.display = 'block';
-        placeLoginGate.style.display = 'block';
       }
       updatePreview();
     } catch (e) {
@@ -854,6 +857,7 @@
   const vtPublished = document.getElementById('vtPublished');
   const vtSaved = document.getElementById('vtSaved');
   const publishPlaceBtn = document.getElementById('publishPlaceBtn');
+  const placeApiKey = document.getElementById('placeApiKey');
   const placeJsonPreview = document.getElementById('placeJsonPreview');
   const placeLog = document.getElementById('placeLog');
 
@@ -866,16 +870,17 @@
       const raw = localStorage.getItem(PLACE_STORAGE_KEY);
       if (!raw) return;
       const p = JSON.parse(raw);
+      if (p.apiKey) placeApiKey.value = p.apiKey;
       if (p.universeId) universeId.value = p.universeId;
       if (p.placeId) placeId.value = p.placeId;
     } catch (e) {}
   }
   function savePlacePrefs(){
     localStorage.setItem(PLACE_STORAGE_KEY, JSON.stringify({
-      universeId: universeId.value, placeId: placeId.value,
+      apiKey: placeApiKey.value, universeId: universeId.value, placeId: placeId.value,
     }));
   }
-  [universeId, placeId].forEach(el => el.addEventListener('input', () => { savePlacePrefs(); updatePlacePreview(); }));
+  [placeApiKey, universeId, placeId].forEach(el => el.addEventListener('input', () => { savePlacePrefs(); updatePlacePreview(); }));
 
   vtPublished.addEventListener('click', () => { versionType = 'Published'; vtPublished.classList.add('active'); vtSaved.classList.remove('active'); updatePlacePreview(); });
   vtSaved.addEventListener('click', () => { versionType = 'Saved'; vtSaved.classList.add('active'); vtPublished.classList.remove('active'); updatePlacePreview(); });
@@ -921,7 +926,7 @@
 
   publishPlaceBtn.addEventListener('click', async () => {
     if (!placeFile) return addPlaceLog('Pilih file .rbxl/.rbxlx dulu.', 'err');
-    if (!currentUser) return addPlaceLog('Login dengan Roblox dulu (tombol di pojok kanan atas).', 'err');
+    if (!placeApiKey.value) return addPlaceLog('Isi Open Cloud API Key (khusus fitur ini, belum didukung OAuth oleh Roblox).', 'err');
     if (!universeId.value || !placeId.value) return addPlaceLog('Isi Universe ID dan Place ID.', 'err');
 
     publishPlaceBtn.disabled = true;
@@ -931,6 +936,7 @@
     try {
       const form = new FormData();
       form.append('file', placeFile);
+      form.append('apiKey', placeApiKey.value);
       form.append('universeId', universeId.value);
       form.append('placeId', placeId.value);
       form.append('versionType', versionType);
@@ -940,7 +946,6 @@
 
       if (!res.ok) {
         addPlaceLog('Gagal: ' + (data.error || 'Roblox menolak publish.'), 'err');
-        if (data.needLogin) await refreshAuthStatus();
         if (data.detail) addPlaceLog(JSON.stringify(data.detail), 'warn');
         return;
       }
