@@ -260,6 +260,21 @@ app.post("/api/upload", requireAuth, upload.single("file"), async (req, res) => 
       });
     }
 
+    // Deteksi dini: file .rbxm/.rbxmx yang pernah di-"Convert to Package" di Studio
+    // menyimpan instance PackageLink di dalamnya. Roblox akan tetap membuat asetnya
+    // sebagai Package walau assetType di sini diset "Model", jadi kita cegat dari awal
+    // supaya user tidak bingung kenapa hasil upload-nya beda dari yang diminta.
+    const isModelLike = requestPayload.assetType === "Model" || requestPayload.assetType === "Animation";
+    if (isModelLike && req.body.allowPackage !== "true") {
+      const rawText = req.file.buffer.toString("latin1");
+      if (rawText.includes("PackageLink")) {
+        return res.status(400).json({
+          error: "File ini terdeteksi mengandung data Package (PackageLink), bukan Model murni. Roblox akan otomatis membuatnya sebagai Package walau assetType diset \"" + requestPayload.assetType + "\".",
+          isPackage: true,
+        });
+      }
+    }
+
     const form = new FormData();
     form.append("request", JSON.stringify(requestPayload));
     form.append(
