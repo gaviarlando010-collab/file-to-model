@@ -281,6 +281,14 @@
           Belum login. Klik <b>Login dengan Roblox</b> di pojok kanan atas untuk memberi izin upload ke akunmu.
         </div>
 
+        <div class="loginGate" id="packageWarning" style="display:none; border-color:#c77; color:#f2b8b8;">
+          <div style="margin-bottom:8px;">File ini terdeteksi mengandung data <b>Package</b> (bukan Model murni) &mdash; hasil upload akan jadi Package di Roblox, bukan Model. Disarankan buka file ini di Studio, klik kanan objeknya &rarr; <b>Unpack</b>, lalu export ulang.</div>
+          <label style="display:flex; align-items:center; gap:8px; font-size:12.5px; cursor:pointer;">
+            <input type="checkbox" id="allowPackageCheck" style="width:auto;" />
+            Saya paham risikonya, tetap upload apa adanya
+          </label>
+        </div>
+
         <button class="primary" id="uploadBtn">Upload ke Roblox</button>
         <button class="ghost" id="clearBtn">Lupakan data tersimpan di perangkat ini</button>
       </div>
@@ -409,6 +417,8 @@
   const loginBtn = document.getElementById('loginBtn');
   const logoutBtn = document.getElementById('logoutBtn');
   const uploadLoginGate = document.getElementById('uploadLoginGate');
+  const packageWarning = document.getElementById('packageWarning');
+  const allowPackageCheck = document.getElementById('allowPackageCheck');
   const placeLoginGate = document.getElementById('placeLoginGate');
 
   const typeButtons = { Model: document.getElementById('typeModel'), Animation: document.getElementById('typeAnimation'), Audio: document.getElementById('typeAudio') };
@@ -566,6 +576,8 @@
   }
 
   function handleFiles(fileListObj){
+    packageWarning.style.display = 'none';
+    allowPackageCheck.checked = false;
     const arr = Array.from(fileListObj);
     const cfg = TYPE_CONFIG[assetType];
     const allowedExts = cfg.accept.split(',');
@@ -716,6 +728,7 @@
         form.append('description', description.value || '');
         form.append('creatorType', creatorType);
         form.append('creatorId', target);
+        if (allowPackageCheck.checked) form.append('allowPackage', 'true');
 
         const res = await fetch('/api/upload', { method: 'POST', body: form });
         const data = await res.json();
@@ -723,8 +736,10 @@
         if (!res.ok) {
           addLog('[' + (i+1) + '/' + selectedFiles.length + '] Gagal: ' + (data.error || 'ditolak Roblox'), 'err');
           if (data.needLogin) { await refreshAuthStatus(); break; }
+          if (data.isPackage) { packageWarning.style.display = 'block'; break; }
           continue;
         }
+        packageWarning.style.display = 'none';
         addLog('[' + (i+1) + '/' + selectedFiles.length + '] Diterima, menunggu moderasi&hellip;', 'ok');
         await pollOperation(data.path, nameForFile, file.name);
       } catch (err) {
