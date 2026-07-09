@@ -46,7 +46,10 @@ const OAUTH_REVOKE_URL = "https://apis.roblox.com/oauth/v1/token/revoke";
 
 // Scope yang dibutuhkan tool ini. Sesuaikan dengan yang dicentang di
 // Creator Dashboard -> OAuth Apps saat membuat aplikasi.
-const OAUTH_SCOPES = "openid profile asset:read asset:write universe-place:write group:read";
+// CATATAN: Roblox belum menyediakan scope OAuth untuk publish Place
+// (universe-place:write bukan scope yang valid per dokumentasi resmi Roblox,
+// publish Place hanya didukung lewat Open Cloud API Key biasa).
+const OAUTH_SCOPES = "openid profile asset:read asset:write group:read";
 
 function base64url(buf) {
   return buf.toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
@@ -315,10 +318,16 @@ app.get("/api/operation", requireAuth, async (req, res) => {
 });
 
 // Publish file .rbxl/.rbxlx ke Place yang SUDAH ADA (harus dibuat manual dulu di roblox.com/Studio)
-app.post("/api/publish-place", requireAuth, upload.single("file"), async (req, res) => {
+//
+// CATATAN: Roblox belum menyediakan scope OAuth untuk publish Place, jadi
+// endpoint ini TIDAK memakai requireAuth/token OAuth seperti endpoint lain
+// -- tetap butuh Open Cloud API Key manual (dengan izin universe-places:write)
+// yang dikirim dari form khusus di tab Publish Place.
+app.post("/api/publish-place", upload.single("file"), async (req, res) => {
   try {
-    const { universeId, placeId, versionType } = req.body;
+    const { apiKey, universeId, placeId, versionType } = req.body;
 
+    if (!apiKey) return res.status(400).json({ error: "Open Cloud API Key wajib diisi (khusus fitur ini, belum didukung OAuth oleh Roblox)." });
     if (!universeId || !placeId) return res.status(400).json({ error: "Universe ID dan Place ID wajib diisi." });
     if (!req.file) return res.status(400).json({ error: "File .rbxl/.rbxlx wajib dipilih." });
 
@@ -335,7 +344,7 @@ app.post("/api/publish-place", requireAuth, upload.single("file"), async (req, r
     const robloxRes = await fetch(url, {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${req.robloxAccessToken}`,
+        "x-api-key": apiKey,
         "Content-Type": contentType,
       },
       body: req.file.buffer,
