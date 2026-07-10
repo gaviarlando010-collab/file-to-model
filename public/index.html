@@ -1070,12 +1070,18 @@
       const props = data.properties || [];
       if (props.length) {
         pkgPropsSection.style.display = 'block';
-        pkgPropsList.innerHTML = props.map(p => {
+        pkgPropsList.innerHTML = props.map((p, pi) => {
           const valuesHtml = p.values && p.values.length
-            ? p.values.map(v => '<div style="color:var(--text-dim); word-break:break-all;">' + (v || '<i>(kosong)</i>') + '</div>').join('')
+            ? p.values.map((v, vi) => v
+                ? '<div style="display:flex; justify-content:space-between; align-items:center; gap:8px; padding:3px 0;"><span style="color:var(--text-dim); word-break:break-all;">' + v + '</span><button type="button" class="small pkgDeleteBtn" data-class="' + p.class + '" data-prop="' + p.property + '" data-value="' + v.replace(/"/g, '&quot;') + '" style="flex-shrink:0;">Hapus</button></div>'
+                : '<div style="color:var(--text-dim); padding:3px 0;"><i>(kosong)</i></div>'
+              ).join('')
             : '<div style="color:#f2b8b8;">' + (p.note || 'Tidak terbaca') + '</div>';
           return '<div style="padding:10px 0; border-bottom:1px solid var(--border);"><b>' + p.class + '</b> &mdash; ' + p.property + valuesHtml + '</div>';
         }).join('');
+        pkgPropsList.querySelectorAll('.pkgDeleteBtn').forEach(btn => {
+          btn.addEventListener('click', () => pkgDeleteValue(btn.dataset.class, btn.dataset.prop, btn.dataset.value, btn));
+        });
       } else {
         pkgPropsSection.style.display = 'none';
       }
@@ -1087,6 +1093,45 @@
       pkgScanBtn.disabled = false;
     }
   });
+
+  async function pkgDeleteValue(className, propName, value, btnEl) {
+    const f = pkgFileInput.files[0];
+    if (!f) return pkgLogMsg('File hilang, pilih ulang file .rbxm-nya.', 'err');
+    if (!confirm('Hapus referensi ini?\n\n' + className + '.' + propName + ' = ' + value + '\n\nFile hasil bersih akan otomatis kedownload.')) return;
+
+    btnEl.disabled = true;
+    btnEl.textContent = 'Menghapus...';
+    try {
+      const form = new FormData();
+      form.append('file', f);
+      form.append('targetClass', className);
+      form.append('targetProperty', propName);
+      form.append('targetValue', value);
+      const res = await fetch('/api/rbxm/clean-value', { method: 'POST', body: form });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        pkgLogMsg('Gagal hapus: ' + (data.error || 'tidak diketahui'), 'err');
+        btnEl.disabled = false;
+        btnEl.textContent = 'Hapus';
+        return;
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = f.name.replace(/\.rbxm$/i, '') + ' [cleaned].rbxm';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      pkgLogMsg('Berhasil! "' + value + '" sudah dihapus dari ' + className + '.' + propName + '. File baru sudah kedownload -- upload ulang lewat tab "Upload Aset" sebagai aset baru.', 'ok');
+      btnEl.textContent = 'Terhapus \u2713';
+    } catch (err) {
+      pkgLogMsg('Kesalahan jaringan: ' + err.message, 'err');
+      btnEl.disabled = false;
+      btnEl.textContent = 'Hapus';
+    }
+  }
 
   // init
   loadPrefs();
