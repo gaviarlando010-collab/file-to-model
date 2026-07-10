@@ -485,24 +485,20 @@ function lz4BlockDecompress(input, outSize) {
   return out;
 }
 
-// Baca daftar class + jumlah instance di dalam file .rbxm (termasuk PackageLink).
-function parseRbxmClasses(buffer) {
+// Baca semua chunk top-level (nama + data yang sudah didekompresi) dari file .rbxm.
+function readAllChunks(buffer) {
   const MAGIC = Buffer.from("<roblox!\x89\xff\r\n\x1a\n", "binary");
   if (buffer.length < 32 || !buffer.subarray(0, 14).equals(MAGIC)) {
     throw new Error("Bukan file .rbxm biner yang valid (magic header tidak cocok).");
   }
-  let pos = 32; // 14 byte magic + 2 versi + 4 numClasses + 4 numInstances + 8 reserved
-  const classes = [];
-
+  let pos = 32;
+  const chunks = [];
   while (pos + 16 <= buffer.length) {
     const chunkName = buffer.toString("ascii", pos, pos + 4).replace(/\0+$/, "");
     const compLen = buffer.readInt32LE(pos + 4);
     const uncompLen = buffer.readInt32LE(pos + 8);
-    // 4 byte reserved di pos+12
     pos += 16;
-
     if (chunkName === "END") break;
-
     let data;
     if (compLen === 0) {
       data = buffer.subarray(pos, pos + uncompLen);
@@ -512,19 +508,91 @@ function parseRbxmClasses(buffer) {
       data = lz4BlockDecompress(compressed, uncompLen);
       pos += compLen;
     }
+    chunks.push({ name: chunkName, data });
+  }
+  return chunks;
+}
 
-    if (chunkName === "INST") {
-      // Layout: int32 classID, string className (int32 len + bytes), byte isService, int32 numInstances, ...
-      let p = 4; // lewati classID
-      const nameLen = data.readInt32LE(p); p += 4;
-      const className = data.toString("utf8", p, p + nameLen); p += nameLen;
-      p += 1; // isService
-      const numInstances = data.readInt32LE(p);
-      classes.push({ className, count: numInstances });
+// Nama property yang biasanya nyimpen referensi aset (gambar/suara/mesh).
+// Ini cuma dipakai buat FILTER mana yang ditampilkan di hasil scan -- tidak
+// pernah dipakai buat menulis ulang apapun.
+const ASSET_PROPERTY_NAMES = new Set([
+  "Image", "HoverImage", "PressedImage", "Texture", "SoundId", "AnimationId",
+  "MeshId", "TextureID", "TextureId", "ColorMap", "MetalnessMap", "NormalMap", "RoughnessMap",
+]);
+
+// Baca class + (kalau bisa) nilai property yang berhubungan dengan aset.
+// SANGAT DEFENSIF: kalau data nggak sesuai pola yang diharapkan (misal
+// panjang string kebaca aneh/di luar batas buffer), langsung ditandai
+// "unknown" alih-alih maksa dibaca -- karena ini FITUR BACA SAJA, salah baca
+// cuma bikin hasil scan kurang lengkap, TIDAK PERNAH merusak file aslinya.
+function parseRbxmFile(buffer) {
+  const chunks = readAllChunks(buffer);
+  const classes = [];
+  const classById = {};
+
+  for (const { name, data } of chunks) {
+    if (name !== "INST") continue;
+    let p = 4;
+    const nameLen = data.readInt32LE(p); p += 4;
+    const className = data.toString("utf8", p, p + nameLen); p += nameLen;
+    p += 1;
+    const numInstances = data.readInt32LE(p);
+    const classId = data.readInt32LE(0);
+    classes.push({ className, count: numInstances });
+    classById[classId] = { className, numInstances };
+  }
+
+  const properties = [];
+  for (const { name, data } of chunks) {
+    if (name !== "PROP") continue;
+    try {
+      let p = 0;
+      const classId = data.readInt32LE(p); p += 4;
+      const propNameLen = data.readInt32LE(p); p += 4;
+      if (propNameLen < 0 || propNameLen > 200) continue;
+      const propName = data.toString("utf8", p, p + propNameLen); p += propNameLen;
+      if (!ASSET_PROPERTY_NAMES.has(propName)) continue;
+
+      const cls = classById[classId];
+      if (!cls) continue;
+
+      const dataType = data.readUInt8(p); p += 1;
+
+      if (dataType !== 0x01) {
+        // Bukan tipe String sederhana (kemungkinan pakai SharedString/tabel index
+        // atau tipe lain) -- jangan dipaksa dibaca, cukup laporkan tipe byte-nya.
+        properties.push({
+          class: cls.className, property: propName,
+          values: [], rawType: dataType, note: "Format tersimpan bukan string biasa (kode tipe: " + dataType + "), belum bisa dibaca isinya oleh scanner ini.",
+        });
+        continue;
+      }
+
+      const values = [];
+      let ok = true;
+      for (let i = 0; i < cls.numInstances; i++) {
+        if (p + 4 > data.length) { ok = false; break; }
+        const len = data.readInt32LE(p); p += 4;
+        if (len < 0 || p + len > data.length) { ok = false; break; }
+        values.push(data.toString("utf8", p, p + len));
+        p += len;
+      }
+      if (!ok) {
+        properties.push({
+          class: cls.className, property: propName,
+          values: [], rawType: dataType, note: "Gagal parsing (data di luar dugaan) -- kemungkinan bukan string sesederhana yang diasumsikan.",
+        });
+      } else {
+        properties.push({ class: cls.className, property: propName, values, rawType: dataType, note: null });
+      }
+    } catch (e) {
+      // Lewati chunk PROP yang gagal diparse -- tidak menghentikan scan chunk lain.
+      continue;
     }
   }
 
-  return classes;
+  return { classes, properties };
 }
 
 app.post("/api/rbxm/scan-classes", upload.single("file"), async (req, res) => {
@@ -534,16 +602,16 @@ app.post("/api/rbxm/scan-classes", upload.single("file"), async (req, res) => {
       return res.status(400).json({ error: "Fitur ini cuma dukung file .rbxm (biner), bukan .rbxmx." });
     }
 
-    let classes;
+    let parsed;
     try {
-      classes = parseRbxmClasses(req.file.buffer);
+      parsed = parseRbxmFile(req.file.buffer);
     } catch (e) {
       return res.status(400).json({ error: "Gagal parsing file: " + e.message });
     }
 
-    classes.sort((a, b) => b.count - a.count);
+    const classes = parsed.classes.sort((a, b) => b.count - a.count);
     const packageLinkCount = classes.find(c => c.className === "PackageLink")?.count || 0;
-    res.json({ classes, packageLinkCount });
+    res.json({ classes, packageLinkCount, properties: parsed.properties });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: err.message || "Terjadi kesalahan pada server lokal." });
