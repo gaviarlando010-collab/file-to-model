@@ -762,23 +762,38 @@ function cleanAssetValue(buffer, targetClass, targetProperty, targetValue) {
 app.post("/api/rbxm/clean-value", upload.single("file"), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: "File .rbxm wajib dipilih." });
-    const { targetClass, targetProperty, targetValue } = req.body;
-    if (!targetClass || !targetProperty || !targetValue) {
-      return res.status(400).json({ error: "Data target (class/property/value) tidak lengkap." });
+
+    let targets;
+    try { targets = JSON.parse(req.body.targets || "[]"); } catch { targets = []; }
+    if (!Array.isArray(targets) || !targets.length) {
+      return res.status(400).json({ error: "Pilih minimal 1 item yang mau dibersihkan." });
     }
 
-    let result;
-    try {
-      result = cleanAssetValue(req.file.buffer, targetClass, targetProperty, targetValue);
-    } catch (e) {
-      return res.status(400).json({ error: e.message });
+    let buffer = req.file.buffer;
+    let totalCleared = 0;
+    const failed = [];
+
+    for (const t of targets) {
+      if (!t || !t.class || !t.property || !t.value) continue;
+      try {
+        const result = cleanAssetValue(buffer, t.class, t.property, t.value);
+        buffer = result.buffer;
+        totalCleared += result.clearedCount;
+      } catch (e) {
+        failed.push(t.class + "." + t.property + " = " + t.value + ": " + e.message);
+      }
+    }
+
+    if (!totalCleared) {
+      return res.status(400).json({ error: "Tidak ada yang berhasil dibersihkan.", detail: failed });
     }
 
     const outName = req.file.originalname.replace(/\.rbxm$/i, "") + " [cleaned].rbxm";
     res.setHeader("Content-Type", "application/octet-stream");
     res.setHeader("Content-Disposition", `attachment; filename="${outName.replace(/"/g, "")}"`);
-    res.setHeader("X-Cleared-Count", String(result.clearedCount));
-    res.send(result.buffer);
+    res.setHeader("X-Cleared-Count", String(totalCleared));
+    if (failed.length) res.setHeader("X-Failed-Items", encodeURIComponent(JSON.stringify(failed)));
+    res.send(buffer);
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: err.message || "Terjadi kesalahan pada server lokal." });
