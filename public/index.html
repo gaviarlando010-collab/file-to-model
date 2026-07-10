@@ -401,14 +401,26 @@
         <div id="pkgSummary" style="margin-bottom:14px;"></div>
         <div id="pkgPropsSection" style="display:none; margin-bottom:20px;">
           <h2>Referensi Aset (Gambar/Suara/Mesh) yang Ditemukan</h2>
+          <div class="hint" style="margin-bottom:10px;">Centang yang mau dihapus, lalu klik "Bersihkan File" di bawah.</div>
           <div class="field" style="margin-bottom:10px;">
             <input type="text" id="pkgSearchInput" placeholder="Cari ID aset, class, atau nama property..." />
           </div>
           <div id="pkgPropsList" style="font-size:12.5px;"></div>
           <div class="hint" id="pkgSearchEmpty" style="display:none;">Tidak ada yang cocok dengan pencarian.</div>
+          <button class="primary" id="pkgCleanBtn" style="margin-top:14px;">Bersihkan File</button>
         </div>
         <h2>Daftar Class di Dalam File</h2>
         <div id="pkgClassList" style="font-family:'JetBrains Mono',monospace; font-size:12.5px;"></div>
+      </div>
+
+      <div id="pkgCleanedSection" style="display:none; margin-top:20px;">
+        <h2>03 &middot; File Sudah Bersih</h2>
+        <div class="loginGate" style="border-color:var(--accent-dim); color:var(--accent);" id="pkgCleanedSummary"></div>
+        <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:10px;">
+          <button class="primary" id="pkgDownloadBtn">Download File</button>
+          <button class="primary" id="pkgUploadBtn">Upload ke Roblox Sekarang</button>
+        </div>
+        <div class="hint" id="pkgUploadHint" style="margin-top:8px;"></div>
       </div>
 
       <div id="pkgLog" style="margin-top:16px;"></div>
@@ -1020,8 +1032,16 @@
   const pkgPropsList = document.getElementById('pkgPropsList');
   const pkgSearchInput = document.getElementById('pkgSearchInput');
   const pkgSearchEmpty = document.getElementById('pkgSearchEmpty');
+  const pkgCleanBtn = document.getElementById('pkgCleanBtn');
+  const pkgCleanedSection = document.getElementById('pkgCleanedSection');
+  const pkgCleanedSummary = document.getElementById('pkgCleanedSummary');
+  const pkgDownloadBtn = document.getElementById('pkgDownloadBtn');
+  const pkgUploadBtn = document.getElementById('pkgUploadBtn');
+  const pkgUploadHint = document.getElementById('pkgUploadHint');
   const pkgLog = document.getElementById('pkgLog');
   let lastPkgProps = [];
+  let cleanedBlob = null;
+  let cleanedFileName = '';
 
   pkgDropzone.addEventListener('click', () => pkgFileInput.click());
   pkgFileInput.addEventListener('change', () => {
@@ -1055,6 +1075,8 @@
     if (!f) { pkgLog.innerHTML = ''; return pkgLogMsg('Pilih file .rbxm dulu.', 'err'); }
     pkgLog.innerHTML = '';
     pkgResult.style.display = 'none';
+    pkgCleanedSection.style.display = 'none';
+    cleanedBlob = null;
     pkgScanBtn.disabled = true;
     pkgLogMsg('Membaca & parsing struktur file&hellip;');
     try {
@@ -1085,44 +1107,93 @@
     }
   });
 
-  async function pkgDeleteValue(className, propName, value, btnEl) {
+  pkgCleanBtn.addEventListener('click', async () => {
     const f = pkgFileInput.files[0];
     if (!f) return pkgLogMsg('File hilang, pilih ulang file .rbxm-nya.', 'err');
-    if (!confirm('Hapus referensi ini?\n\n' + className + '.' + propName + ' = ' + value + '\n\nFile hasil bersih akan otomatis kedownload.')) return;
 
-    btnEl.disabled = true;
-    btnEl.textContent = 'Menghapus...';
+    const checked = Array.from(pkgPropsList.querySelectorAll('.pkgCheckbox:checked'));
+    if (!checked.length) return pkgLogMsg('Centang minimal 1 aset yang mau dihapus.', 'err');
+
+    const targets = checked.map(cb => ({ class: cb.dataset.class, property: cb.dataset.prop, value: cb.dataset.value }));
+
+    pkgCleanBtn.disabled = true;
+    pkgCleanBtn.textContent = 'Membersihkan...';
+    pkgCleanedSection.style.display = 'none';
     try {
       const form = new FormData();
       form.append('file', f);
-      form.append('targetClass', className);
-      form.append('targetProperty', propName);
-      form.append('targetValue', value);
+      form.append('targets', JSON.stringify(targets));
       const res = await fetch('/api/rbxm/clean-value', { method: 'POST', body: form });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        pkgLogMsg('Gagal hapus: ' + (data.error || 'tidak diketahui'), 'err');
-        btnEl.disabled = false;
-        btnEl.textContent = 'Hapus';
+        pkgLogMsg('Gagal: ' + (data.error || 'tidak diketahui'), 'err');
         return;
       }
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = f.name.replace(/\.rbxm$/i, '') + ' [cleaned].rbxm';
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(url);
-      pkgLogMsg('Berhasil! "' + value + '" sudah dihapus dari ' + className + '.' + propName + '. File baru sudah kedownload -- upload ulang lewat tab "Upload Aset" sebagai aset baru.', 'ok');
-      btnEl.textContent = 'Terhapus \u2713';
+      const clearedCount = res.headers.get('X-Cleared-Count') || targets.length;
+      cleanedBlob = await res.blob();
+      cleanedFileName = f.name.replace(/\.rbxm$/i, '') + ' [cleaned].rbxm';
+
+      pkgCleanedSummary.textContent = 'Berhasil membersihkan ' + clearedCount + ' referensi aset. File baru siap didownload atau langsung diupload.';
+      pkgCleanedSection.style.display = 'block';
+      pkgUploadHint.textContent = currentUser
+        ? 'Akan diupload sebagai Model ke akun: ' + (currentUser.username || currentUser.id) + (creatorType === 'group' ? ' (grup ' + creatorId.value + ')' : '')
+        : 'Login dengan Roblox dulu (tombol pojok kanan atas) buat pakai upload langsung -- atau download aja terus upload manual lewat tab Upload Aset.';
+      pkgUploadBtn.disabled = !currentUser;
+      pkgLogMsg('Selesai membersihkan file.', 'ok');
     } catch (err) {
       pkgLogMsg('Kesalahan jaringan: ' + err.message, 'err');
-      btnEl.disabled = false;
-      btnEl.textContent = 'Hapus';
+    } finally {
+      pkgCleanBtn.disabled = false;
+      pkgCleanBtn.textContent = 'Bersihkan File';
     }
-  }
+  });
+
+  pkgDownloadBtn.addEventListener('click', () => {
+    if (!cleanedBlob) return;
+    const url = URL.createObjectURL(cleanedBlob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = cleanedFileName;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  });
+
+  pkgUploadBtn.addEventListener('click', async () => {
+    if (!cleanedBlob) return;
+    if (!currentUser) return pkgLogMsg('Login dengan Roblox dulu.', 'err');
+    const target = creatorId.value || currentUser.id;
+    if (!target) return pkgLogMsg('Isi Creator ID di tab Upload Aset dulu.', 'err');
+
+    pkgUploadBtn.disabled = true;
+    pkgUploadBtn.textContent = 'Mengupload...';
+    pkgLogMsg('Mengirim file bersih ke Roblox&hellip;');
+    try {
+      const form = new FormData();
+      form.append('file', cleanedBlob, cleanedFileName);
+      form.append('assetType', 'Model');
+      form.append('displayName', cleanedFileName.replace(/\.rbxm$/i, ''));
+      form.append('description', '');
+      form.append('creatorType', creatorType);
+      form.append('creatorId', target);
+
+      const res = await fetch('/api/upload', { method: 'POST', body: form });
+      const data = await res.json();
+      if (!res.ok) {
+        pkgLogMsg('Gagal upload: ' + (data.error || 'ditolak Roblox'), 'err');
+        if (data.isPackage) pkgLogMsg('File ini masih kedeteksi Package -- coba hapus PackageId juga lewat search box di atas.', 'warn');
+        return;
+      }
+      pkgLogMsg('Berhasil dikirim! Menunggu moderasi Roblox&hellip;', 'ok');
+      await pollOperation(data.path, cleanedFileName.replace(/\.rbxm$/i, ''), cleanedFileName);
+    } catch (err) {
+      pkgLogMsg('Kesalahan jaringan: ' + err.message, 'err');
+    } finally {
+      pkgUploadBtn.disabled = false;
+      pkgUploadBtn.textContent = 'Upload ke Roblox Sekarang';
+    }
+  });
 
   function renderPkgProps(searchTerm) {
     const term = (searchTerm || '').trim().toLowerCase();
@@ -1145,7 +1216,7 @@
 
       const valuesHtml = (p.values && p.values.length)
         ? filteredValues.map(v => v
-            ? '<div style="display:flex; justify-content:space-between; align-items:center; gap:8px; padding:3px 0;"><span style="color:var(--text-dim); word-break:break-all;">' + v + '</span><button type="button" class="small pkgDeleteBtn" data-class="' + p.class + '" data-prop="' + p.property + '" data-value="' + v.replace(/"/g, '&quot;') + '" style="flex-shrink:0;">Hapus</button></div>'
+            ? '<label style="display:flex; justify-content:space-between; align-items:center; gap:8px; padding:3px 0; cursor:pointer;"><span style="color:var(--text-dim); word-break:break-all;">' + v + '</span><input type="checkbox" class="pkgCheckbox" data-class="' + p.class + '" data-prop="' + p.property + '" data-value="' + v.replace(/"/g, '&quot;') + '" style="width:auto; flex-shrink:0;" /></label>'
             : '<div style="color:var(--text-dim); padding:3px 0;"><i>(kosong)</i></div>'
           ).join('')
         : '<div style="color:#f2b8b8;">' + (p.note || 'Tidak terbaca') + '</div>';
@@ -1159,9 +1230,6 @@
     }
     pkgSearchEmpty.style.display = 'none';
     pkgPropsList.innerHTML = rows.join('');
-    pkgPropsList.querySelectorAll('.pkgDeleteBtn').forEach(btn => {
-      btn.addEventListener('click', () => pkgDeleteValue(btn.dataset.class, btn.dataset.prop, btn.dataset.value, btn));
-    });
   }
 
   pkgSearchInput.addEventListener('input', () => renderPkgProps(pkgSearchInput.value));
