@@ -399,6 +399,10 @@
 
       <div id="pkgResult" style="margin-top:20px; display:none;">
         <div id="pkgSummary" style="margin-bottom:14px;"></div>
+        <div id="pkgPropsSection" style="display:none; margin-bottom:20px;">
+          <h2>Referensi Aset (Gambar/Suara/Mesh) yang Ditemukan</h2>
+          <div id="pkgPropsList" style="font-size:12.5px;"></div>
+        </div>
         <h2>Daftar Class di Dalam File</h2>
         <div id="pkgClassList" style="font-family:'JetBrains Mono',monospace; font-size:12.5px;"></div>
       </div>
@@ -1008,6 +1012,8 @@
   const pkgResult = document.getElementById('pkgResult');
   const pkgSummary = document.getElementById('pkgSummary');
   const pkgClassList = document.getElementById('pkgClassList');
+  const pkgPropsSection = document.getElementById('pkgPropsSection');
+  const pkgPropsList = document.getElementById('pkgPropsList');
   const pkgLog = document.getElementById('pkgLog');
 
   pkgDropzone.addEventListener('click', () => pkgFileInput.click());
@@ -1060,6 +1066,20 @@
       pkgClassList.innerHTML = data.classes.map(c =>
         '<div style="display:flex; justify-content:space-between; padding:6px 0; border-bottom:1px solid var(--border);"><span' + (c.className === 'PackageLink' ? ' style="color:#f2b8b8; font-weight:600;"' : '') + '>' + c.className + '</span><span style="color:var(--text-dim);">' + c.count + '</span></div>'
       ).join('');
+
+      const props = data.properties || [];
+      if (props.length) {
+        pkgPropsSection.style.display = 'block';
+        pkgPropsList.innerHTML = props.map(p => {
+          const valuesHtml = p.values && p.values.length
+            ? p.values.map(v => '<div style="color:var(--text-dim); word-break:break-all;">' + (v || '<i>(kosong)</i>') + '</div>').join('')
+            : '<div style="color:#f2b8b8;">' + (p.note || 'Tidak terbaca') + '</div>';
+          return '<div style="padding:10px 0; border-bottom:1px solid var(--border);"><b>' + p.class + '</b> &mdash; ' + p.property + valuesHtml + '</div>';
+        }).join('');
+      } else {
+        pkgPropsSection.style.display = 'none';
+      }
+
       pkgResult.style.display = 'block';
     } catch (err) {
       pkgLogMsg('Kesalahan jaringan: ' + err.message, 'err');
