@@ -618,6 +618,146 @@ app.post("/api/rbxm/scan-classes", upload.single("file"), async (req, res) => {
   }
 });
 
+// Sama seperti readAllChunks, tapi juga catat posisi byte tiap chunk di
+// FILE ASLI (bukan cuma data yang sudah didekompresi) -- dibutuhkan buat
+// bisa "menyuntik" chunk baru ke posisi yang tepat waktu proses hapus/edit.
+function readAllChunksWithOffsets(buffer) {
+  const MAGIC = Buffer.from("<roblox!\x89\xff\r\n\x1a\n", "binary");
+  if (buffer.length < 32 || !buffer.subarray(0, 14).equals(MAGIC)) {
+    throw new Error("Bukan file .rbxm biner yang valid (magic header tidak cocok).");
+  }
+  let pos = 32;
+  const chunks = [];
+  while (pos + 16 <= buffer.length) {
+    const chunkName = buffer.toString("ascii", pos, pos + 4).replace(/\0+$/, "");
+    const compLen = buffer.readInt32LE(pos + 4);
+    const uncompLen = buffer.readInt32LE(pos + 8);
+    const headerStart = pos;
+    pos += 16;
+    if (chunkName === "END") break;
+    const dataStart = pos;
+    let data;
+    if (compLen === 0) {
+      data = buffer.subarray(pos, pos + uncompLen);
+      pos += uncompLen;
+    } else {
+      data = lz4BlockDecompress(buffer.subarray(pos, pos + compLen), uncompLen);
+      pos += compLen;
+    }
+    chunks.push({ name: chunkName, data, headerStart, dataEnd: pos });
+  }
+  return chunks;
+}
+
+// Hapus (kosongkan) SEMUA kemunculan 1 nilai spesifik pada 1 class+property
+// tertentu di dalam file .rbxm. Chunk lain (INST, PRNT, PROP lainnya) TIDAK
+// disentuh sama sekali -- hanya PROP chunk yang cocok class+property yang
+// ditulis ulang (sebagai chunk uncompressed baru), lalu disambung balik ke
+// posisi yang sama di file. Kalau target tidak ketemu / hasil parsing
+// mencurigakan, GAGAL dengan jelas -- tidak pernah memaksa nulis file yang
+// meragukan.
+function cleanAssetValue(buffer, targetClass, targetProperty, targetValue) {
+  const chunks = readAllChunksWithOffsets(buffer);
+
+  const classById = {};
+  for (const c of chunks) {
+    if (c.name !== "INST") continue;
+    let p = 4;
+    const nameLen = c.data.readInt32LE(p); p += 4;
+    const className = c.data.toString("utf8", p, p + nameLen); p += nameLen;
+    const classId = c.data.readInt32LE(0);
+    if (className === targetClass) classById[classId] = className;
+  }
+  if (!Object.keys(classById).length) {
+    throw new Error("Class \"" + targetClass + "\" tidak ditemukan di file ini.");
+  }
+
+  let target = null;
+  for (const c of chunks) {
+    if (c.name !== "PROP") continue;
+    const classId = c.data.readInt32LE(0);
+    if (!(classId in classById)) continue;
+    let p = 4;
+    const propNameLen = c.data.readInt32LE(p); p += 4;
+    const propName = c.data.toString("utf8", p, p + propNameLen); p += propNameLen;
+    if (propName !== targetProperty) continue;
+    const dataType = c.data.readUInt8(p);
+    if (dataType !== 0x01) {
+      throw new Error("Property ini bukan format string sederhana (tipe: " + dataType + "), belum bisa diedit otomatis.");
+    }
+    target = c;
+    break;
+  }
+  if (!target) {
+    throw new Error("Property \"" + targetClass + "." + targetProperty + "\" tidak ditemukan di file ini.");
+  }
+
+  const data = target.data;
+  let p = 4;
+  const propNameLen = data.readInt32LE(p); p += 4;
+  p += propNameLen;
+  p += 1; // dataType
+
+  const pieces = [data.subarray(0, p)];
+  let foundCount = 0;
+  while (p < data.length) {
+    if (p + 4 > data.length) throw new Error("Struktur property rusak/tidak terduga saat parsing.");
+    const len = data.readInt32LE(p);
+    const valStart = p + 4;
+    if (len < 0 || valStart + len > data.length) throw new Error("Struktur property rusak/tidak terduga saat parsing.");
+    const val = data.toString("utf8", valStart, valStart + len);
+    if (val === targetValue) {
+      const emptyLen = Buffer.alloc(4); // len=0
+      pieces.push(emptyLen);
+      foundCount++;
+    } else {
+      pieces.push(data.subarray(p, valStart + len));
+    }
+    p = valStart + len;
+  }
+
+  if (!foundCount) {
+    throw new Error("Nilai \"" + targetValue + "\" tidak ditemukan pada property ini.");
+  }
+
+  const newData = Buffer.concat(pieces);
+  const newChunkHeader = Buffer.alloc(16);
+  newChunkHeader.write("PROP", 0, "ascii");
+  newChunkHeader.writeInt32LE(0, 4); // uncompressed
+  newChunkHeader.writeInt32LE(newData.length, 8);
+  newChunkHeader.writeInt32LE(0, 12);
+
+  const before = buffer.subarray(0, target.headerStart);
+  const after = buffer.subarray(target.dataEnd);
+  return { buffer: Buffer.concat([before, newChunkHeader, newData, after]), clearedCount: foundCount };
+}
+
+app.post("/api/rbxm/clean-value", upload.single("file"), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: "File .rbxm wajib dipilih." });
+    const { targetClass, targetProperty, targetValue } = req.body;
+    if (!targetClass || !targetProperty || !targetValue) {
+      return res.status(400).json({ error: "Data target (class/property/value) tidak lengkap." });
+    }
+
+    let result;
+    try {
+      result = cleanAssetValue(req.file.buffer, targetClass, targetProperty, targetValue);
+    } catch (e) {
+      return res.status(400).json({ error: e.message });
+    }
+
+    const outName = req.file.originalname.replace(/\.rbxm$/i, "") + " [cleaned].rbxm";
+    res.setHeader("Content-Type", "application/octet-stream");
+    res.setHeader("Content-Disposition", `attachment; filename="${outName.replace(/"/g, "")}"`);
+    res.setHeader("X-Cleared-Count", String(result.clearedCount));
+    res.send(result.buffer);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message || "Terjadi kesalahan pada server lokal." });
+  }
+});
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`\n✔ Roblox Model Uploader (OAuth login) berjalan di http://localhost:${PORT}\n`);
