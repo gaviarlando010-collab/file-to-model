@@ -392,6 +392,7 @@
 
       <div class="field">
         <label>File .rbxm</label>
+        <div class="dropzone" id="pkgDropzone">Klik untuk pilih file, atau seret ke sini</div>
         <input type="file" id="pkgFileInput" accept=".rbxm" />
       </div>
       <button class="primary" id="pkgScanBtn">Scan File</button>
@@ -1002,11 +1003,32 @@
 
   // ---------- Tab: Cek Package (scan-only, read-only, no deps) ----------
   const pkgFileInput = document.getElementById('pkgFileInput');
+  const pkgDropzone = document.getElementById('pkgDropzone');
   const pkgScanBtn = document.getElementById('pkgScanBtn');
   const pkgResult = document.getElementById('pkgResult');
   const pkgSummary = document.getElementById('pkgSummary');
   const pkgClassList = document.getElementById('pkgClassList');
   const pkgLog = document.getElementById('pkgLog');
+
+  pkgDropzone.addEventListener('click', () => pkgFileInput.click());
+  pkgFileInput.addEventListener('change', () => {
+    const f = pkgFileInput.files[0];
+    if (f) {
+      pkgDropzone.textContent = f.name + ' (' + Math.round(f.size / 1024) + ' KB)';
+      pkgDropzone.classList.add('has-file');
+    } else {
+      pkgDropzone.textContent = 'Klik untuk pilih file, atau seret ke sini';
+      pkgDropzone.classList.remove('has-file');
+    }
+  });
+  pkgDropzone.addEventListener('dragover', e => { e.preventDefault(); pkgDropzone.classList.add('has-file'); });
+  pkgDropzone.addEventListener('drop', e => {
+    e.preventDefault();
+    if (e.dataTransfer.files.length) {
+      pkgFileInput.files = e.dataTransfer.files;
+      pkgFileInput.dispatchEvent(new Event('change'));
+    }
+  });
 
   function pkgLogMsg(msg, type){
     const div = document.createElement('div');
