@@ -546,6 +546,12 @@ function parseRbxmFile(buffer) {
     classById[classId] = { className, numInstances };
   }
 
+  // Pola yang menandakan sebuah string kemungkinan referensi aset Roblox --
+  // dipakai buat scan LUAS (bukan cuma nama property yang sudah dikenal),
+  // supaya ID yang "nyempil" di tempat nggak biasa (misal StringValue.Value
+  // yang dipakai script buat load gambar dinamis) tetap ketemu.
+  const ASSET_ID_PATTERN = /rbxassetid:\/\/\d+/i;
+
   const properties = [];
   for (const { name, data } of chunks) {
     if (name !== "PROP") continue;
@@ -555,20 +561,23 @@ function parseRbxmFile(buffer) {
       const propNameLen = data.readInt32LE(p); p += 4;
       if (propNameLen < 0 || propNameLen > 200) continue;
       const propName = data.toString("utf8", p, p + propNameLen); p += propNameLen;
-      if (!ASSET_PROPERTY_NAMES.has(propName)) continue;
 
       const cls = classById[classId];
       if (!cls) continue;
 
+      const isCurated = ASSET_PROPERTY_NAMES.has(propName);
       const dataType = data.readUInt8(p); p += 1;
 
       if (dataType !== 0x01) {
-        // Bukan tipe String sederhana (kemungkinan pakai SharedString/tabel index
-        // atau tipe lain) -- jangan dipaksa dibaca, cukup laporkan tipe byte-nya.
-        properties.push({
-          class: cls.className, property: propName,
-          values: [], rawType: dataType, note: "Format tersimpan bukan string biasa (kode tipe: " + dataType + "), belum bisa dibaca isinya oleh scanner ini.",
-        });
+        // Cuma laporkan "tidak terbaca" buat property yang memang dikenal
+        // relevan -- kalau semua property non-string dilaporkan juga hasilnya
+        // bakal penuh noise (Vector3/CFrame/dll memang wajar bukan string).
+        if (isCurated) {
+          properties.push({
+            class: cls.className, property: propName,
+            values: [], rawType: dataType, note: "Format tersimpan bukan string biasa (kode tipe: " + dataType + "), belum bisa dibaca isinya oleh scanner ini.",
+          });
+        }
         continue;
       }
 
@@ -581,12 +590,19 @@ function parseRbxmFile(buffer) {
         values.push(data.toString("utf8", p, p + len));
         p += len;
       }
+
       if (!ok) {
-        properties.push({
-          class: cls.className, property: propName,
-          values: [], rawType: dataType, note: "Gagal parsing (data di luar dugaan) -- kemungkinan bukan string sesederhana yang diasumsikan.",
-        });
-      } else {
+        if (isCurated) {
+          properties.push({
+            class: cls.className, property: propName,
+            values: [], rawType: dataType, note: "Gagal parsing (data di luar dugaan) -- kemungkinan bukan string sesederhana yang diasumsikan.",
+          });
+        }
+        continue;
+      }
+
+      const hasAssetIdPattern = values.some(v => ASSET_ID_PATTERN.test(v));
+      if (isCurated || hasAssetIdPattern) {
         properties.push({ class: cls.className, property: propName, values, rawType: dataType, note: null });
       }
     } catch (e) {
