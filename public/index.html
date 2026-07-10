@@ -401,7 +401,11 @@
         <div id="pkgSummary" style="margin-bottom:14px;"></div>
         <div id="pkgPropsSection" style="display:none; margin-bottom:20px;">
           <h2>Referensi Aset (Gambar/Suara/Mesh) yang Ditemukan</h2>
+          <div class="field" style="margin-bottom:10px;">
+            <input type="text" id="pkgSearchInput" placeholder="Cari ID aset, class, atau nama property..." />
+          </div>
           <div id="pkgPropsList" style="font-size:12.5px;"></div>
+          <div class="hint" id="pkgSearchEmpty" style="display:none;">Tidak ada yang cocok dengan pencarian.</div>
         </div>
         <h2>Daftar Class di Dalam File</h2>
         <div id="pkgClassList" style="font-family:'JetBrains Mono',monospace; font-size:12.5px;"></div>
@@ -1014,7 +1018,10 @@
   const pkgClassList = document.getElementById('pkgClassList');
   const pkgPropsSection = document.getElementById('pkgPropsSection');
   const pkgPropsList = document.getElementById('pkgPropsList');
+  const pkgSearchInput = document.getElementById('pkgSearchInput');
+  const pkgSearchEmpty = document.getElementById('pkgSearchEmpty');
   const pkgLog = document.getElementById('pkgLog');
+  let lastPkgProps = [];
 
   pkgDropzone.addEventListener('click', () => pkgFileInput.click());
   pkgFileInput.addEventListener('change', () => {
@@ -1059,7 +1066,7 @@
 
       pkgLogMsg('Berhasil parsing file.', 'ok');
       if (data.packageLinkCount > 0) {
-        pkgSummary.innerHTML = '<div class="loginGate" style="border-color:#c77; color:#f2b8b8;">File ini <b>mengandung ' + data.packageLinkCount + ' PackageLink</b> &mdash; ini yang bikin Roblox nganggep file kamu jadi <b>Package</b>, bukan Model. Konten lain (Part, mesh, GUI, dll) tidak terpengaruh oleh temuan ini. Buat convert ke Model penuh, hapus instance PackageLink ini lewat Explorer di Studio Lite (klik kanan objeknya cari opsi Unpack, atau cari langsung object class PackageLink dan hapus).</div>';
+        pkgSummary.innerHTML = '<div class="loginGate" style="border-color:#c77; color:#f2b8b8;">File ini <b>mengandung ' + data.packageLinkCount + ' PackageLink</b> &mdash; ini yang bikin Roblox nganggep file kamu jadi <b>Package</b>, bukan Model. Konten lain (Part, mesh, GUI, dll) tidak terpengaruh oleh temuan ini.<br><br><b>Cara paling pasti:</b> hapus instance PackageLink ini lewat Explorer di Studio Lite (cari class PackageLink, hapus objeknya).<br><br><b>Cara eksperimental (opsional):</b> cari "PackageId" di kotak pencarian bawah, lalu klik Hapus pada nilainya. Ini cuma mengosongkan 1 nilai (sama amannya dengan hapus ID gambar), tapi belum pasti cukup bikin Roblox berhenti nganggep file ini Package -- coba upload ulang setelahnya untuk lihat hasilnya.</div>';
       } else {
         pkgSummary.innerHTML = '<div class="loginGate" style="border-color:var(--accent-dim); color:var(--accent);">Tidak ditemukan PackageLink di file ini &mdash; kemungkinan besar file ini memang Model murni, bukan Package.</div>';
       }
@@ -1067,25 +1074,9 @@
         '<div style="display:flex; justify-content:space-between; padding:6px 0; border-bottom:1px solid var(--border);"><span' + (c.className === 'PackageLink' ? ' style="color:#f2b8b8; font-weight:600;"' : '') + '>' + c.className + '</span><span style="color:var(--text-dim);">' + c.count + '</span></div>'
       ).join('');
 
-      const props = data.properties || [];
-      if (props.length) {
-        pkgPropsSection.style.display = 'block';
-        pkgPropsList.innerHTML = props.map((p, pi) => {
-          const valuesHtml = p.values && p.values.length
-            ? p.values.map((v, vi) => v
-                ? '<div style="display:flex; justify-content:space-between; align-items:center; gap:8px; padding:3px 0;"><span style="color:var(--text-dim); word-break:break-all;">' + v + '</span><button type="button" class="small pkgDeleteBtn" data-class="' + p.class + '" data-prop="' + p.property + '" data-value="' + v.replace(/"/g, '&quot;') + '" style="flex-shrink:0;">Hapus</button></div>'
-                : '<div style="color:var(--text-dim); padding:3px 0;"><i>(kosong)</i></div>'
-              ).join('')
-            : '<div style="color:#f2b8b8;">' + (p.note || 'Tidak terbaca') + '</div>';
-          return '<div style="padding:10px 0; border-bottom:1px solid var(--border);"><b>' + p.class + '</b> &mdash; ' + p.property + valuesHtml + '</div>';
-        }).join('');
-        pkgPropsList.querySelectorAll('.pkgDeleteBtn').forEach(btn => {
-          btn.addEventListener('click', () => pkgDeleteValue(btn.dataset.class, btn.dataset.prop, btn.dataset.value, btn));
-        });
-      } else {
-        pkgPropsSection.style.display = 'none';
-      }
-
+      lastPkgProps = data.properties || [];
+      pkgSearchInput.value = '';
+      renderPkgProps('');
       pkgResult.style.display = 'block';
     } catch (err) {
       pkgLogMsg('Kesalahan jaringan: ' + err.message, 'err');
@@ -1132,6 +1123,48 @@
       btnEl.textContent = 'Hapus';
     }
   }
+
+  function renderPkgProps(searchTerm) {
+    const term = (searchTerm || '').trim().toLowerCase();
+    if (!lastPkgProps.length) {
+      pkgPropsSection.style.display = 'none';
+      return;
+    }
+    pkgPropsSection.style.display = 'block';
+
+    const rows = [];
+    for (const p of lastPkgProps) {
+      const groupMatches = !term || p.class.toLowerCase().includes(term) || p.property.toLowerCase().includes(term);
+      const valueEntries = (p.values && p.values.length) ? p.values : [null];
+      const filteredValues = valueEntries.filter(v => {
+        if (!term) return true;
+        if (groupMatches) return true;
+        return v && v.toLowerCase().includes(term);
+      });
+      if (!filteredValues.length) continue;
+
+      const valuesHtml = (p.values && p.values.length)
+        ? filteredValues.map(v => v
+            ? '<div style="display:flex; justify-content:space-between; align-items:center; gap:8px; padding:3px 0;"><span style="color:var(--text-dim); word-break:break-all;">' + v + '</span><button type="button" class="small pkgDeleteBtn" data-class="' + p.class + '" data-prop="' + p.property + '" data-value="' + v.replace(/"/g, '&quot;') + '" style="flex-shrink:0;">Hapus</button></div>'
+            : '<div style="color:var(--text-dim); padding:3px 0;"><i>(kosong)</i></div>'
+          ).join('')
+        : '<div style="color:#f2b8b8;">' + (p.note || 'Tidak terbaca') + '</div>';
+      rows.push('<div style="padding:10px 0; border-bottom:1px solid var(--border);"><b>' + p.class + '</b> &mdash; ' + p.property + valuesHtml + '</div>');
+    }
+
+    if (!rows.length) {
+      pkgPropsList.innerHTML = '';
+      pkgSearchEmpty.style.display = 'block';
+      return;
+    }
+    pkgSearchEmpty.style.display = 'none';
+    pkgPropsList.innerHTML = rows.join('');
+    pkgPropsList.querySelectorAll('.pkgDeleteBtn').forEach(btn => {
+      btn.addEventListener('click', () => pkgDeleteValue(btn.dataset.class, btn.dataset.prop, btn.dataset.value, btn));
+    });
+  }
+
+  pkgSearchInput.addEventListener('input', () => renderPkgProps(pkgSearchInput.value));
 
   // init
   loadPrefs();
