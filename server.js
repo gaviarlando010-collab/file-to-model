@@ -513,12 +513,15 @@ function readAllChunks(buffer) {
   return chunks;
 }
 
-// Nama property yang biasanya nyimpen referensi aset (gambar/suara/mesh).
+// Nama property yang biasanya nyimpen referensi aset (gambar/suara/mesh),
+// termasuk PackageId (dipakai buat percobaan "convert ke Model penuh" --
+// mengosongkan PackageId di dalam PackageLink, tanpa mengubah struktur tree).
 // Ini cuma dipakai buat FILTER mana yang ditampilkan di hasil scan -- tidak
-// pernah dipakai buat menulis ulang apapun.
+// pernah dipakai buat menulis ulang apapun secara langsung.
 const ASSET_PROPERTY_NAMES = new Set([
   "Image", "HoverImage", "PressedImage", "Texture", "SoundId", "AnimationId",
   "MeshId", "TextureID", "TextureId", "ColorMap", "MetalnessMap", "NormalMap", "RoughnessMap",
+  "PackageId",
 ]);
 
 // Baca class + (kalau bisa) nilai property yang berhubungan dengan aset.
@@ -672,64 +675,88 @@ function cleanAssetValue(buffer, targetClass, targetProperty, targetValue) {
     throw new Error("Class \"" + targetClass + "\" tidak ditemukan di file ini.");
   }
 
-  let target = null;
+  // Bersihkan SEMUA PROP chunk yang cocok class+property, bukan cuma yang
+  // pertama ketemu -- penting buat file "kit gabungan" yang bisa punya lebih
+  // dari 1 kelompok class/instance yang sama (classId beda-beda).
+  let cursor = 32;
+  const pieces = [buffer.subarray(0, 32)];
+  let totalCleared = 0;
+  let matchedChunkCount = 0;
+
   for (const c of chunks) {
-    if (c.name !== "PROP") continue;
-    const classId = c.data.readInt32LE(0);
-    if (!(classId in classById)) continue;
+    let isTarget = false;
+    if (c.name === "PROP") {
+      const classId = c.data.readInt32LE(0);
+      if (classId in classById) {
+        let p = 4;
+        const propNameLen = c.data.readInt32LE(p); p += 4;
+        const propName = c.data.toString("utf8", p, p + propNameLen);
+        if (propName === targetProperty) isTarget = true;
+      }
+    }
+
+    if (!isTarget) {
+      pieces.push(buffer.subarray(cursor, c.dataEnd));
+      cursor = c.dataEnd;
+      continue;
+    }
+
+    matchedChunkCount++;
+    const data = c.data;
     let p = 4;
-    const propNameLen = c.data.readInt32LE(p); p += 4;
-    const propName = c.data.toString("utf8", p, p + propNameLen); p += propNameLen;
-    if (propName !== targetProperty) continue;
-    const dataType = c.data.readUInt8(p);
+    const propNameLen = data.readInt32LE(p); p += 4;
+    p += propNameLen;
+    const dataType = data.readUInt8(p); p += 1;
+
     if (dataType !== 0x01) {
       throw new Error("Property ini bukan format string sederhana (tipe: " + dataType + "), belum bisa diedit otomatis.");
     }
-    target = c;
-    break;
+
+    const valuePieces = [data.subarray(0, p)];
+    let foundInThisChunk = 0;
+    while (p < data.length) {
+      if (p + 4 > data.length) throw new Error("Struktur property rusak/tidak terduga saat parsing.");
+      const len = data.readInt32LE(p);
+      const valStart = p + 4;
+      if (len < 0 || valStart + len > data.length) throw new Error("Struktur property rusak/tidak terduga saat parsing.");
+      const val = data.toString("utf8", valStart, valStart + len);
+      if (val === targetValue) {
+        valuePieces.push(Buffer.alloc(4));
+        foundInThisChunk++;
+      } else {
+        valuePieces.push(data.subarray(p, valStart + len));
+      }
+      p = valStart + len;
+    }
+
+    totalCleared += foundInThisChunk;
+
+    if (foundInThisChunk === 0) {
+      pieces.push(buffer.subarray(cursor, c.dataEnd));
+      cursor = c.dataEnd;
+      continue;
+    }
+
+    const newData = Buffer.concat(valuePieces);
+    const newChunkHeader = Buffer.alloc(16);
+    newChunkHeader.write("PROP", 0, "ascii");
+    newChunkHeader.writeInt32LE(0, 4);
+    newChunkHeader.writeInt32LE(newData.length, 8);
+    newChunkHeader.writeInt32LE(0, 12);
+    pieces.push(newChunkHeader, newData);
+    cursor = c.dataEnd;
   }
-  if (!target) {
+
+  pieces.push(buffer.subarray(cursor));
+
+  if (!matchedChunkCount) {
     throw new Error("Property \"" + targetClass + "." + targetProperty + "\" tidak ditemukan di file ini.");
   }
-
-  const data = target.data;
-  let p = 4;
-  const propNameLen = data.readInt32LE(p); p += 4;
-  p += propNameLen;
-  p += 1; // dataType
-
-  const pieces = [data.subarray(0, p)];
-  let foundCount = 0;
-  while (p < data.length) {
-    if (p + 4 > data.length) throw new Error("Struktur property rusak/tidak terduga saat parsing.");
-    const len = data.readInt32LE(p);
-    const valStart = p + 4;
-    if (len < 0 || valStart + len > data.length) throw new Error("Struktur property rusak/tidak terduga saat parsing.");
-    const val = data.toString("utf8", valStart, valStart + len);
-    if (val === targetValue) {
-      const emptyLen = Buffer.alloc(4); // len=0
-      pieces.push(emptyLen);
-      foundCount++;
-    } else {
-      pieces.push(data.subarray(p, valStart + len));
-    }
-    p = valStart + len;
-  }
-
-  if (!foundCount) {
+  if (!totalCleared) {
     throw new Error("Nilai \"" + targetValue + "\" tidak ditemukan pada property ini.");
   }
 
-  const newData = Buffer.concat(pieces);
-  const newChunkHeader = Buffer.alloc(16);
-  newChunkHeader.write("PROP", 0, "ascii");
-  newChunkHeader.writeInt32LE(0, 4); // uncompressed
-  newChunkHeader.writeInt32LE(newData.length, 8);
-  newChunkHeader.writeInt32LE(0, 12);
-
-  const before = buffer.subarray(0, target.headerStart);
-  const after = buffer.subarray(target.dataEnd);
-  return { buffer: Buffer.concat([before, newChunkHeader, newData, after]), clearedCount: foundCount };
+  return { buffer: Buffer.concat(pieces), clearedCount: totalCleared };
 }
 
 app.post("/api/rbxm/clean-value", upload.single("file"), async (req, res) => {
