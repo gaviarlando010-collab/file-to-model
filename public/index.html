@@ -408,7 +408,11 @@
           </div>
           <div id="pkgPropsList" style="font-size:12.5px;"></div>
           <div class="hint" id="pkgSearchEmpty" style="display:none;">Tidak ada yang cocok dengan pencarian.</div>
-          <button class="primary" id="pkgCleanBtn" style="margin-top:14px;">Bersihkan File</button>
+          <label style="display:flex; align-items:center; gap:8px; font-size:12.5px; margin-top:14px; cursor:pointer;">
+            <input type="checkbox" id="pkgReplaceMode" style="width:auto;" checked />
+            Ganti gambar (Image/Texture) yang dihapus dengan icon default kosong, bukan dibiarkan blank
+          </label>
+          <button class="primary" id="pkgCleanBtn" style="margin-top:10px;">Bersihkan File</button>
         </div>
         <h2>Daftar Class di Dalam File</h2>
         <div id="pkgClassList" style="font-family:'JetBrains Mono',monospace; font-size:12.5px;"></div>
@@ -1036,6 +1040,7 @@
   const pkgCheckOwnersBtn = document.getElementById('pkgCheckOwnersBtn');
   let ownerInfoById = {};
   const pkgCleanBtn = document.getElementById('pkgCleanBtn');
+  const pkgReplaceMode = document.getElementById('pkgReplaceMode');
   const pkgCleanedSection = document.getElementById('pkgCleanedSection');
   const pkgCleanedSummary = document.getElementById('pkgCleanedSummary');
   const pkgDownloadBtn = document.getElementById('pkgDownloadBtn');
@@ -1118,7 +1123,14 @@
     const checked = Array.from(pkgPropsList.querySelectorAll('.pkgCheckbox:checked'));
     if (!checked.length) return pkgLogMsg('Centang minimal 1 aset yang mau dihapus.', 'err');
 
-    const targets = checked.map(cb => ({ class: cb.dataset.class, property: cb.dataset.prop, value: cb.dataset.value }));
+    const IMAGE_PROPS = new Set(['Image', 'HoverImage', 'PressedImage', 'Texture']);
+    const targets = checked.map(cb => {
+      const t = { class: cb.dataset.class, property: cb.dataset.prop, value: cb.dataset.value };
+      if (pkgReplaceMode.checked && IMAGE_PROPS.has(cb.dataset.prop)) {
+        t.replacement = 'rbxassetid://0';
+      }
+      return t;
+    });
 
     pkgCleanBtn.disabled = true;
     pkgCleanBtn.textContent = 'Membersihkan...';
