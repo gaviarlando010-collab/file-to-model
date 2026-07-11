@@ -675,7 +675,8 @@ function readAllChunksWithOffsets(buffer) {
 // posisi yang sama di file. Kalau target tidak ketemu / hasil parsing
 // mencurigakan, GAGAL dengan jelas -- tidak pernah memaksa nulis file yang
 // meragukan.
-function cleanAssetValue(buffer, targetClass, targetProperty, targetValue) {
+function cleanAssetValue(buffer, targetClass, targetProperty, targetValue, replacement) {
+  const replacementBuf = Buffer.from(replacement || "", "utf8");
   const chunks = readAllChunksWithOffsets(buffer);
 
   const classById = {};
@@ -737,7 +738,9 @@ function cleanAssetValue(buffer, targetClass, targetProperty, targetValue) {
       if (len < 0 || valStart + len > data.length) throw new Error("Struktur property rusak/tidak terduga saat parsing.");
       const val = data.toString("utf8", valStart, valStart + len);
       if (val === targetValue) {
-        valuePieces.push(Buffer.alloc(4));
+        const lenBuf = Buffer.alloc(4);
+        lenBuf.writeInt32LE(replacementBuf.length, 0);
+        valuePieces.push(lenBuf, replacementBuf);
         foundInThisChunk++;
       } else {
         valuePieces.push(data.subarray(p, valStart + len));
@@ -792,7 +795,7 @@ app.post("/api/rbxm/clean-value", upload.single("file"), async (req, res) => {
     for (const t of targets) {
       if (!t || !t.class || !t.property || !t.value) continue;
       try {
-        const result = cleanAssetValue(buffer, t.class, t.property, t.value);
+        const result = cleanAssetValue(buffer, t.class, t.property, t.value, t.replacement || "");
         buffer = result.buffer;
         totalCleared += result.clearedCount;
       } catch (e) {
