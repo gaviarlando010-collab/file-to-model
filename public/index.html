@@ -402,7 +402,7 @@
         <div id="pkgPropsSection" style="display:none; margin-bottom:20px;">
           <h2>Referensi Aset (Gambar/Suara/Mesh) yang Ditemukan</h2>
           <div class="hint" style="margin-bottom:10px;">Centang yang mau dihapus, lalu klik "Bersihkan File" di bawah.</div>
-          <button type="button" class="small" id="pkgCheckOwnersBtn" style="margin-bottom:10px;">Cek Semua Pemilik (bandingkan dengan akun kamu)</button>
+          <button type="button" class="small" id="pkgCheckOwnersBtn" style="margin-bottom:10px;">Cek Mana yang Beneran Blocker</button>
           <div class="field" style="margin-bottom:10px;">
             <input type="text" id="pkgSearchInput" placeholder="Cari ID aset, class, atau nama property..." />
           </div>
@@ -1218,7 +1218,7 @@
       try {
         const res = await fetch('/api/asset-owner?assetId=' + id);
         const data = await res.json();
-        ownerInfoById[id] = res.ok ? { creatorName: data.creatorName, name: data.name } : { error: true };
+        ownerInfoById[id] = res.ok ? data : { error: true };
       } catch (e) {
         ownerInfoById[id] = { error: true };
       }
@@ -1228,8 +1228,8 @@
       renderPkgProps(pkgSearchInput.value);
     }
     pkgCheckOwnersBtn.disabled = false;
-    pkgCheckOwnersBtn.textContent = 'Cek Semua Pemilik (bandingkan dengan akun kamu)';
-    pkgLogMsg('Selesai cek pemilik ' + idList.length + ' aset. ID yang ditandai merah kemungkinan bukan punya kamu.', 'ok');
+    pkgCheckOwnersBtn.textContent = 'Cek Mana yang Beneran Blocker';
+    pkgLogMsg('Selesai cek ' + idList.length + ' aset. Cuma yang ditandai MERAH (Limited buatan orang lain / tidak terdaftar) yang perlu dihapus -- yang abu-abu "Aman (Toolbox/publik)" JANGAN dihapus, itu boleh dipakai.', 'ok');
     renderPkgProps(pkgSearchInput.value);
   });
 
@@ -1261,10 +1261,18 @@
               const info = ownerInfoById[idMatch[1]];
               if (info) {
                 if (info.error) {
-                  ownerHtml = '<div style="font-size:11px; color:#e0b84a;">Gagal cek pemilik (mungkin aset privat)</div>';
+                  ownerHtml = '<div style="font-size:11px; color:var(--text-dim);">Belum dicek</div>';
+                } else if (info.unregistered) {
+                  ownerHtml = '<div style="font-size:11px; color:#f2b8b8;">\u26a0 Kemungkinan besar BLOCKER -- aset tidak terdaftar/tidak ditemukan di Roblox</div>';
                 } else {
                   const isMine = currentUser && info.creatorName && info.creatorName.toLowerCase() === (currentUser.username || '').toLowerCase();
-                  ownerHtml = '<div style="font-size:11px; color:' + (isMine ? 'var(--accent)' : '#f2b8b8') + ';">' + (isMine ? '\u2713 Punya kamu' : '\u26a0 Bukan punya kamu') + ' -- @' + info.creatorName + (info.name ? ' (' + info.name + ')' : '') + '</div>';
+                  if (isMine) {
+                    ownerHtml = '<div style="font-size:11px; color:var(--accent);">\u2713 Punya kamu</div>';
+                  } else if (info.isLimited) {
+                    ownerHtml = '<div style="font-size:11px; color:#f2b8b8;">\u26a0 Kemungkinan besar BLOCKER -- aset Limited buatan @' + info.creatorName + '</div>';
+                  } else {
+                    ownerHtml = '<div style="font-size:11px; color:var(--text-dim);">Aman (aset Toolbox/publik) -- @' + info.creatorName + (info.name ? ' (' + info.name + ')' : '') + '</div>';
+                  }
                 }
               }
             }
