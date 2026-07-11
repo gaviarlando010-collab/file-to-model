@@ -816,6 +816,35 @@ app.post("/api/rbxm/clean-value", upload.single("file"), async (req, res) => {
   }
 });
 
+// Cek siapa pemilik/creator asli sebuah asset ID (dipakai buat bandingin
+// sama akun kamu sendiri -- biar ketauan mana ID yang "asing"/bukan punya
+// kamu tanpa harus nunggu popup Roblox yang kadang nggak konsisten muncul).
+app.get("/api/asset-owner", async (req, res) => {
+  try {
+    const { assetId } = req.query;
+    if (!assetId || !/^\d+$/.test(String(assetId))) {
+      return res.status(400).json({ error: "assetId tidak valid." });
+    }
+
+    const robloxRes = await fetch(`https://economy.roblox.com/v2/assets/${assetId}/details`);
+    if (!robloxRes.ok) {
+      return res.status(robloxRes.status).json({ error: "Gagal ambil info asset dari Roblox (mungkin aset privat/tidak ada)." });
+    }
+    const data = await robloxRes.json();
+
+    res.json({
+      assetId: Number(assetId),
+      name: data.Name || null,
+      creatorId: data.Creator?.Id ?? null,
+      creatorName: data.Creator?.Name ?? null,
+      creatorType: data.Creator?.CreatorType ?? null,
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message || "Terjadi kesalahan pada server lokal." });
+  }
+});
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`\n✔ Roblox Model Uploader (OAuth login) berjalan di http://localhost:${PORT}\n`);
