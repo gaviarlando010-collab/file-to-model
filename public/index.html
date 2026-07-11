@@ -402,6 +402,7 @@
         <div id="pkgPropsSection" style="display:none; margin-bottom:20px;">
           <h2>Referensi Aset (Gambar/Suara/Mesh) yang Ditemukan</h2>
           <div class="hint" style="margin-bottom:10px;">Centang yang mau dihapus, lalu klik "Bersihkan File" di bawah.</div>
+          <button type="button" class="small" id="pkgCheckOwnersBtn" style="margin-bottom:10px;">Cek Semua Pemilik (bandingkan dengan akun kamu)</button>
           <div class="field" style="margin-bottom:10px;">
             <input type="text" id="pkgSearchInput" placeholder="Cari ID aset, class, atau nama property..." />
           </div>
@@ -1032,6 +1033,8 @@
   const pkgPropsList = document.getElementById('pkgPropsList');
   const pkgSearchInput = document.getElementById('pkgSearchInput');
   const pkgSearchEmpty = document.getElementById('pkgSearchEmpty');
+  const pkgCheckOwnersBtn = document.getElementById('pkgCheckOwnersBtn');
+  let ownerInfoById = {};
   const pkgCleanBtn = document.getElementById('pkgCleanBtn');
   const pkgCleanedSection = document.getElementById('pkgCleanedSection');
   const pkgCleanedSummary = document.getElementById('pkgCleanedSummary');
@@ -1097,6 +1100,7 @@
       ).join('');
 
       lastPkgProps = data.properties || [];
+      ownerInfoById = {};
       pkgSearchInput.value = '';
       renderPkgProps('');
       pkgResult.style.display = 'block';
@@ -1195,6 +1199,40 @@
     }
   });
 
+  pkgCheckOwnersBtn.addEventListener('click', async () => {
+    const ids = new Set();
+    for (const p of lastPkgProps) {
+      for (const v of (p.values || [])) {
+        const m = v && v.match(/rbxassetid:\/\/(\d+)/i);
+        if (m) ids.add(m[1]);
+      }
+    }
+    if (!ids.size) return pkgLogMsg('Tidak ada ID rbxassetid:// yang bisa dicek.', 'warn');
+
+    pkgCheckOwnersBtn.disabled = true;
+    const idList = Array.from(ids);
+    pkgCheckOwnersBtn.textContent = 'Mengecek 0/' + idList.length + '...';
+    let done = 0;
+    for (const id of idList) {
+      if (ownerInfoById[id]) { done++; continue; }
+      try {
+        const res = await fetch('/api/asset-owner?assetId=' + id);
+        const data = await res.json();
+        ownerInfoById[id] = res.ok ? { creatorName: data.creatorName, name: data.name } : { error: true };
+      } catch (e) {
+        ownerInfoById[id] = { error: true };
+      }
+      done++;
+      pkgCheckOwnersBtn.textContent = 'Mengecek ' + done + '/' + idList.length + '...';
+      await new Promise(r => setTimeout(r, 200)); // jaga-jaga biar nggak kena rate limit Roblox
+      renderPkgProps(pkgSearchInput.value);
+    }
+    pkgCheckOwnersBtn.disabled = false;
+    pkgCheckOwnersBtn.textContent = 'Cek Semua Pemilik (bandingkan dengan akun kamu)';
+    pkgLogMsg('Selesai cek pemilik ' + idList.length + ' aset. ID yang ditandai merah kemungkinan bukan punya kamu.', 'ok');
+    renderPkgProps(pkgSearchInput.value);
+  });
+
   function renderPkgProps(searchTerm) {
     const term = (searchTerm || '').trim().toLowerCase();
     if (!lastPkgProps.length) {
@@ -1215,10 +1253,23 @@
       if (!filteredValues.length) continue;
 
       const valuesHtml = (p.values && p.values.length)
-        ? filteredValues.map(v => v
-            ? '<label style="display:flex; justify-content:space-between; align-items:center; gap:8px; padding:3px 0; cursor:pointer;"><span style="color:var(--text-dim); word-break:break-all;">' + v + '</span><input type="checkbox" class="pkgCheckbox" data-class="' + p.class + '" data-prop="' + p.property + '" data-value="' + v.replace(/"/g, '&quot;') + '" style="width:auto; flex-shrink:0;" /></label>'
-            : '<div style="color:var(--text-dim); padding:3px 0;"><i>(kosong)</i></div>'
-          ).join('')
+        ? filteredValues.map(v => {
+            if (!v) return '<div style="color:var(--text-dim); padding:3px 0;"><i>(kosong)</i></div>';
+            const idMatch = v.match(/rbxassetid:\/\/(\d+)/i);
+            let ownerHtml = '';
+            if (idMatch) {
+              const info = ownerInfoById[idMatch[1]];
+              if (info) {
+                if (info.error) {
+                  ownerHtml = '<div style="font-size:11px; color:#e0b84a;">Gagal cek pemilik (mungkin aset privat)</div>';
+                } else {
+                  const isMine = currentUser && info.creatorName && info.creatorName.toLowerCase() === (currentUser.username || '').toLowerCase();
+                  ownerHtml = '<div style="font-size:11px; color:' + (isMine ? 'var(--accent)' : '#f2b8b8') + ';">' + (isMine ? '\u2713 Punya kamu' : '\u26a0 Bukan punya kamu') + ' -- @' + info.creatorName + (info.name ? ' (' + info.name + ')' : '') + '</div>';
+                }
+              }
+            }
+            return '<label style="display:flex; justify-content:space-between; align-items:flex-start; gap:8px; padding:3px 0; cursor:pointer;"><span style="color:var(--text-dim); word-break:break-all;">' + v + ownerHtml + '</span><input type="checkbox" class="pkgCheckbox" data-class="' + p.class + '" data-prop="' + p.property + '" data-value="' + v.replace(/"/g, '&quot;') + '" style="width:auto; flex-shrink:0; margin-top:2px;" /></label>';
+          }).join('')
         : '<div style="color:#f2b8b8;">' + (p.note || 'Tidak terbaca') + '</div>';
       rows.push('<div style="padding:10px 0; border-bottom:1px solid var(--border);"><b>' + p.class + '</b> &mdash; ' + p.property + valuesHtml + '</div>');
     }
