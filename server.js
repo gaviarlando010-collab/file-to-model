@@ -828,7 +828,13 @@ app.get("/api/asset-owner", async (req, res) => {
 
     const robloxRes = await fetch(`https://economy.roblox.com/v2/assets/${assetId}/details`);
     if (!robloxRes.ok) {
-      return res.status(robloxRes.status).json({ error: "Gagal ambil info asset dari Roblox (mungkin aset privat/tidak ada)." });
+      // Kalau gagal diambil (404/dll), ini SANGAT mungkin "Audio/Video yang
+      // tidak terdaftar" -- salah satu dari 2 kategori yang Roblox sebut
+      // sebagai penyebab blokir distribusi.
+      return res.json({
+        assetId: Number(assetId),
+        unregistered: true,
+      });
     }
     const data = await robloxRes.json();
 
@@ -838,6 +844,8 @@ app.get("/api/asset-owner", async (req, res) => {
       creatorId: data.Creator?.Id ?? null,
       creatorName: data.Creator?.Name ?? null,
       creatorType: data.Creator?.CreatorType ?? null,
+      isLimited: !!(data.IsLimited || data.IsLimitedUnique),
+      unregistered: false,
     });
   } catch (err) {
     console.error(err);
